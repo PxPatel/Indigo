@@ -1,0 +1,19 @@
+# Indigo Backlog
+
+## High Priority
+1. **Time filters across views** — Add YTD, 1YR, Custom date range filters on multiple views (Holdings, Cash Flow, Risk, Benchmark) where appropriate. Overview already has range selector; extend pattern.
+2. ~~**Cashflow hover detail breakdown**~~ — DONE. When hovering longer over a bar in the capital flow timeline, expand the popup to show that day's ticker-level activity breakdown: which tickers were bought/sold, amounts per ticker, and cumulative flow per ticker. Important for understanding daily capital deployment.
+3. **Clarify "Total Deployed" / "Total Withdrawn" labels** — Current cashflow stat labels are unintuitive. Rethink naming to be clearer (e.g. "Total Bought" / "Total Sold", or "Capital In" / "Capital Out"). Need user input on preferred terminology.
+
+## Medium Priority
+4. **Wash sale / tax columns in Holdings** — Add toggleable tax columns: adjusted cost basis (including disallowed wash sale loss carried over) and a "Carried Disallowed Loss" column. Open P&L remains based on nominal cost basis and market value — tax columns are informational overlay only.
+5. **Transaction timestamps with timezone** — Show full time (not just date) for each transaction, displayed in the original timezone of the transaction (EST/EDT as provided in the CSV).
+6. ~~**Manual fund transfer entry**~~ — DONE. Deposits/withdrawals can be added via the Manual Entries modal (Fund Transfers tab). They feed into cashflow timeline and stats.
+7. ~~**Cash balance anchor**~~ — DONE. Manual form in the Cash Balance tab of Manual Entries modal. Sets a known cash balance on a date, derives cash timeline by walking transactions/transfers forward and backward from the anchor. Cash timeline returned via `GET /cash-anchor`.
+
+## Future Phases
+9. **Stock split handling** — Webull CSVs do not retroactively adjust pre-split transactions. The engine's `walk_transactions_avg_cost` sees original pre-split quantities/prices while yfinance returns split-adjusted prices, causing incorrect avg cost and unrealized P&L for any position bought before a split. Fix: detect splits from yfinance (already fetched in `portfolio_engine.build()`) and apply the ratio to pre-split `avg_cost` and `shares_held` entries after the accounting walk, before they're used in `build_summary` and `build_holdings`.
+
+
+7. **Options trades support** — Partially Done. Options CSVs share the same structure. Parse and display options transactions, P&L, and exposure. Separate phase.
+8. **Holdings time travel** — Date picker on the Holdings page lets the user rewind to any past date (clamped between first transaction date and today). Backend replays all transactions up to that date, fetches prices as of market close, and returns holdings/PnL/weights as they stood then. Frontend shows a banner when in time-travel mode; resets to current on tab switch or page reload (ephemeral UI state only, no persistence). Backend approach: add `?as_of=YYYY-MM-DD` param to `GET /portfolio/holdings`.
