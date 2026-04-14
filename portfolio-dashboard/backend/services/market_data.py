@@ -13,6 +13,18 @@ from utils.calculations import RETRY_SLEEP_SECONDS
 
 logger = logging.getLogger(__name__)
 
+
+def _coerce_splits_to_series(raw: pd.Series | pd.DataFrame | None) -> pd.Series:
+    """yfinance returns splits as a one-column DataFrame; split code expects index → ratio."""
+    if raw is None:
+        return pd.Series(dtype=float)
+    if isinstance(raw, pd.DataFrame):
+        if raw.empty or len(raw.columns) == 0:
+            return pd.Series(dtype=float)
+        return raw.iloc[:, 0].astype(float)
+    return raw
+
+
 # Cache TTLs
 _TTL_HISTORICAL = 43200      # 12 hours — historical data doesn't change
 _TTL_INTRADAY = 45           # intraday must refresh often while the tape is moving
@@ -210,14 +222,15 @@ class MarketDataService:
         """
         cache_key = f"splits_{symbol}"
         if cache_key in self._price_cache and self._is_fresh(cache_key, _TTL_HISTORICAL):
-            return self._price_cache[cache_key]
+            splits = _coerce_splits_to_series(self._price_cache[cache_key])
+            splits.index = pd.to_datetime(splits.index).tz_localize(None)
+            self._price_cache[cache_key] = splits
+            return splits
 
         for attempt in range(2):
             try:
                 ticker = yf.Ticker(symbol)
-                splits = ticker.splits  # pd.Series, index=datetime, values=ratio
-                if splits is None:
-                    splits = pd.Series(dtype=float)
+                splits = _coerce_splits_to_series(ticker.splits)
                 splits.index = pd.to_datetime(splits.index).tz_localize(None)
                 self._price_cache[cache_key] = splits
                 self._cache_ts[cache_key] = time.time()

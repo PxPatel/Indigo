@@ -108,5 +108,15 @@ class TestAdjustStockTransactions:
         assert r.total_cost_basis["ZZZ"] == pytest.approx(5000.0)
 
 
+def test_coerce_yfinance_splits_dataframe_to_series():
+    """yfinance exposes splits as a one-column frame; engine expects a Series of ratios."""
+    from services.market_data import _coerce_splits_to_series
+
+    df = pd.DataFrame({"Stock Splits": [2.0, 4.0]}, index=[pd.Timestamp("2020-01-01"), pd.Timestamp("2021-01-01")])
+    s = _coerce_splits_to_series(df)
+    assert isinstance(s, pd.Series)
+    assert s.tolist() == [2.0, 4.0]
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

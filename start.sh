@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "$0")/portfolio-dashboard" && pwd)"
 # Start backend
 cd "$ROOT/backend"
 source venv/bin/activate
-uvicorn main:app --reload &
+python -m uvicorn main:app --reload &
 BACKEND_PID=$!
 
 # Start frontend
