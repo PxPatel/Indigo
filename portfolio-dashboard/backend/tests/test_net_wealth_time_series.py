@@ -112,6 +112,7 @@ def test_build_history_net_account_field():
             "total": [100.0, 100.0, 100.0],
             "cash": [50.0, 50.0, 50.0],
             "net_account": [150.0, 150.0, 150.0],
+            "equity_cost_basis": [70.0, 70.0, 70.0],
         },
         index=idx,
     )
@@ -119,3 +120,7 @@ def test_build_history_net_account_field():
     assert len(resp.history) == 3
     assert resp.history[0].net_account_value == pytest.approx(150.0)
     assert resp.history[0].value == pytest.approx(100.0)
+    assert resp.history[0].equity_cost_basis == pytest.approx(70.0)
+    assert resp.history[0].equity_unrealized_pnl == pytest.approx(30.0)
+    assert resp.history[0].equity_total_pnl == pytest.approx(30.0)
+    assert resp.history[0].cash_balance == pytest.approx(50.0)

@@ -2,24 +2,32 @@ import { useQuery } from '@tanstack/react-query';
 import { useState, useMemo } from 'react';
 import { Search, ChevronDown, ChevronUp, ArrowUpDown } from 'lucide-react';
 import { api } from '../api/client';
+import { usePortfolioStore } from '../stores/portfolioStore';
+import { getTimeRangeBounds } from '../utils/timeRange';
+import { TimeRangeControl } from '../components/TimeRangeControl';
 import { Card } from '../components/Card';
 import { MetricCard } from '../components/MetricCard';
 import { LoadingShimmer } from '../components/LoadingShimmer';
 import { formatCurrency } from '../utils/format';
-import type { TransactionRecord } from '../api/client';
 
 type SortKey = 'date' | 'symbol' | 'quantity' | 'price' | 'total';
 
 export default function Transactions() {
-  const [filterSymbol, setFilterSymbol] = useState('');
+  const timeRangePreset = usePortfolioStore((s) => s.timeRangePreset);
+  const customDays = usePortfolioStore((s) => s.customDays);
+  const { from: rangeFrom, to: rangeTo } = useMemo(
+    () => getTimeRangeBounds(timeRangePreset, customDays),
+    [timeRangePreset, customDays],
+  );
+
   const [filterSide, setFilterSide] = useState<'' | 'BUY' | 'SELL'>('');
   const [search, setSearch] = useState('');
   const [sortKey, setSortKey] = useState<SortKey>('date');
   const [sortAsc, setSortAsc] = useState(false);
 
   const { data, isLoading } = useQuery({
-    queryKey: ['transactions'],
-    queryFn: () => api.transactions(),
+    queryKey: ['transactions', rangeFrom, rangeTo],
+    queryFn: () => api.transactions({ from: rangeFrom, to: rangeTo }),
   });
 
   const filtered = useMemo(() => {
@@ -43,48 +51,56 @@ export default function Transactions() {
     else { setSortKey(key); setSortAsc(false); }
   };
 
-  if (isLoading || !data) return <LoadingShimmer height={500} />;
+  if (isLoading || !data) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <TimeRangeControl />
+        <LoadingShimmer height={500} />
+      </div>
+    );
+  }
   const { stats } = data;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <TimeRangeControl />
       {/* Stats */}
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
         <MetricCard
           index={0}
           label="Total Transactions"
           value={stats.total_count.toString()}
-          tooltip="Total number of filled buy and sell orders parsed from your uploaded CSV data."
+          tooltip="Count of filled buy and sell orders in the selected time range."
         />
         <MetricCard
           index={1}
           label="Buys"
           value={stats.buy_count.toString()}
-          tooltip="Number of buy orders across all your uploaded data."
+          tooltip="Buy orders in the selected time range."
         />
         <MetricCard
           index={2}
           label="Sells"
           value={stats.sell_count.toString()}
-          tooltip="Number of sell orders across all your uploaded data."
+          tooltip="Sell orders in the selected time range."
         />
         <MetricCard
           index={3}
           label="Avg Buy Size"
           value={formatCurrency(stats.avg_buy_size)}
-          tooltip="Average dollar amount per buy order."
+          tooltip="Average dollar amount per buy order in the selected time range."
         />
         <MetricCard
           index={4}
           label="Avg Sell Size"
           value={formatCurrency(stats.avg_sell_size)}
-          tooltip="Average dollar amount per sell order."
+          tooltip="Average dollar amount per sell order in the selected time range."
         />
         <MetricCard
           index={5}
           label="Most Traded"
           value={stats.most_traded_symbol}
-          tooltip="Symbol with the highest number of buy and sell orders combined."
+          tooltip="Symbol with the most orders in the selected time range."
         />
       </div>
 

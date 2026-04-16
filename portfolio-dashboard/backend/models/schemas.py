@@ -66,6 +66,12 @@ class PortfolioHistoryPoint(BaseModel):
     daily_return: float
     cumulative_return: float
     net_account_value: Optional[float] = None  # equity MTM + implied cash when anchor set
+    equity_cost_basis: float = 0.0
+    equity_unrealized_pnl: float = 0.0
+    # EOD cumulative realized (closed trades); unrealized + this = total trading P&L
+    cumulative_realized_pnl: float = 0.0
+    equity_total_pnl: float = 0.0
+    cash_balance: Optional[float] = None  # implied cash when cash anchor path; else None
 
 
 class PortfolioHistoryResponse(BaseModel):

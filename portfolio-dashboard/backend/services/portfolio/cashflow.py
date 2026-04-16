@@ -43,8 +43,11 @@ class CashflowService:
         self._cash_anchor = cash_anchor
 
     def get_timeline(self, start: date | None = None, end: date | None = None) -> CashflowTimelineResponse:
-        """Build the full cashflow timeline response with daily points, monthly rollups, and stats."""
-        # Build per-date inflow/outflow from transactions + fund transfers.
+        """Build the full cashflow timeline response with daily points, monthly rollups, and stats.
+
+        Trade cashflows only (BUY = cash out / inflow bar, SELL = cash in / outflow bar).
+        Fund transfers are excluded here; they still feed ``get_cash_timeline`` for anchor math.
+        """
         # Synthetic option-expiry entries (total_amount=0) contribute 0 to dollar flows
         # but correctly create date entries in the timeline.
         daily_flows: dict[str, dict] = {}
@@ -53,7 +56,7 @@ class CashflowService:
         for t in self._processed:
             d = t.date.date().isoformat()
             if d not in daily_flows:
-                daily_flows[d] = {"inflow": 0, "outflow": 0, "deposit": 0, "withdrawal": 0}
+                daily_flows[d] = {"inflow": 0, "outflow": 0}
             if t.side == "BUY":
                 daily_flows[d]["inflow"] += t.total_amount
             else:
@@ -65,16 +68,7 @@ class CashflowService:
             key = (t.symbol, t.side)
             daily_trades[d][key] = daily_trades[d].get(key, 0.0) + t.total_amount
 
-        for ft in self._fund_transfers:
-            d = ft["date"]
-            if d not in daily_flows:
-                daily_flows[d] = {"inflow": 0, "outflow": 0, "deposit": 0, "withdrawal": 0}
-            if ft["type"] == "DEPOSIT":
-                daily_flows[d]["deposit"] += ft["amount"]
-            else:
-                daily_flows[d]["withdrawal"] += ft["amount"]
-
-        # Build the timeline. cumulative tracks net invested (BUY outlays - SELL proceeds - withdrawals + deposits).
+        # Build the timeline. cumulative = running net from trades (buys − sells as signed flow).
         # last_realized carries forward the last known cumulative realized P&L for dates without transactions.
         timeline = []
         cumulative = 0.0
@@ -82,8 +76,8 @@ class CashflowService:
         for d in sorted(daily_flows.keys()):
             f = daily_flows[d]
             dt = date.fromisoformat(d)
-            total_in = f["inflow"] + f["deposit"]
-            total_out = f["outflow"] + f["withdrawal"]
+            total_in = f["inflow"]
+            total_out = f["outflow"]
             cumulative += total_in - total_out
             last_realized = self._daily_realized.get(d, last_realized)
             if start and dt < start:
@@ -120,15 +114,6 @@ class CashflowService:
             else:
                 monthly[m]["outflow"] += t.total_amount
 
-        for ft in self._fund_transfers:
-            m = ft["date"][:7]  # YYYY-MM
-            if m not in monthly:
-                monthly[m] = {"inflow": 0, "outflow": 0}
-            if ft["type"] == "DEPOSIT":
-                monthly[m]["inflow"] += ft["amount"]
-            else:
-                monthly[m]["outflow"] += ft["amount"]
-
         monthly_list = [
             MonthlyCashflow(month=m, inflow=round(v["inflow"], 2), outflow=round(v["outflow"], 2))
             for m, v in sorted(monthly.items())
@@ -153,17 +138,13 @@ class CashflowService:
         # avg_transaction_size and trade counts.
         buys = [t for t in self._original if t.side == "BUY"]
         sells = [t for t in self._original if t.side == "SELL"]
-        total_deposits = sum(ft["amount"] for ft in self._fund_transfers if ft["type"] == "DEPOSIT")
-        total_withdrawals = sum(ft["amount"] for ft in self._fund_transfers if ft["type"] == "WITHDRAWAL")
         total_bought = sum(t.total_amount for t in buys)
         total_sold = sum(t.total_amount for t in sells)
 
         stats = CashflowStats(
-            total_deployed=round(total_bought + total_deposits, 2),
-            total_withdrawn=round(total_sold + total_withdrawals, 2),
-            net_invested=round(
-                (total_bought + total_deposits) - (total_sold + total_withdrawals), 2
-            ),
+            total_deployed=round(total_bought, 2),
+            total_withdrawn=round(total_sold, 2),
+            net_invested=round(total_bought - total_sold, 2),
             largest_buy=round(max((t.total_amount for t in buys), default=0), 2),
             largest_sell=round(max((t.total_amount for t in sells), default=0), 2),
             avg_transaction_size=round(

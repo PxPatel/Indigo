@@ -5,10 +5,7 @@ import pandas as pd
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from models.schemas import Transaction
+from models.schemas import Transaction
 
 RISK_FREE_RATE = 0.05
 TRADING_DAYS = 252
@@ -31,6 +28,92 @@ class AccountingResult:
     cumulative_invested: float           # net cash deployed (outlays minus sell proceeds)
     last_activity: dict[str, str]        # symbol → "YYYY-MM-DD" of most recent transaction
     daily_cumulative_realized: dict[str, float]  # "YYYY-MM-DD" → cumulative realized P&L after all txns that date
+
+
+def apply_avg_cost_transaction_step(
+    shares: dict[str, float],
+    avg_cost: dict[str, float],
+    t: Transaction,
+) -> None:
+    """Apply one transaction to average-cost state (mutates shares, avg_cost).
+
+    Must stay in lockstep with the share/avg_cost branches in walk_transactions_avg_cost.
+    """
+    current = shares[t.symbol]
+
+    if t.side == "BUY":
+        if current < 0:
+            cover_qty = min(t.quantity, abs(current))
+            shares[t.symbol] += cover_qty
+            remaining_buy = t.quantity - cover_qty
+
+            if remaining_buy > 0:
+                avg_cost[t.symbol] = t.price
+                shares[t.symbol] += remaining_buy
+            elif abs(shares[t.symbol]) < MIN_SHARE_THRESHOLD:
+                avg_cost[t.symbol] = 0.0
+        else:
+            old_total_cost = avg_cost[t.symbol] * current
+            new_total_cost = old_total_cost + t.total_amount
+            shares[t.symbol] += t.quantity
+            if shares[t.symbol] > 0:
+                avg_cost[t.symbol] = new_total_cost / shares[t.symbol]
+
+    elif t.side == "SELL":
+        if current > 0:
+            sell_qty = min(t.quantity, current)
+            shares[t.symbol] -= sell_qty
+            remaining_sell = t.quantity - sell_qty
+
+            if remaining_sell > 0:
+                avg_cost[t.symbol] = t.price
+                shares[t.symbol] -= remaining_sell
+            elif abs(shares[t.symbol]) < MIN_SHARE_THRESHOLD:
+                avg_cost[t.symbol] = 0.0
+        else:
+            old_total_cost = avg_cost[t.symbol] * abs(current)
+            new_total_cost = old_total_cost + t.total_amount
+            shares[t.symbol] -= t.quantity
+            if shares[t.symbol] < 0:
+                avg_cost[t.symbol] = new_total_cost / abs(shares[t.symbol])
+
+    shares[t.symbol] = round(shares[t.symbol], 6)
+    if abs(shares[t.symbol]) < MIN_SHARE_THRESHOLD:
+        shares[t.symbol] = 0.0
+        avg_cost[t.symbol] = 0.0
+
+
+def daily_equity_cost_basis_eod_series(
+    transactions: list[Transaction],
+    equity_symbols: set[str],
+    date_range: pd.DatetimeIndex,
+) -> pd.Series:
+    """End-of-day aggregate equity cost basis (avg_cost × abs(shares)) per business day.
+
+    Applies the same average-cost rules as walk_transactions_avg_cost, advancing through
+    calendar time so EOD on day D includes all transactions with date ≤ D (calendar).
+    Only symbols in ``equity_symbols`` contribute to the sum (matches equity MTM scope).
+    """
+    # Same chronological ordering as walk_transactions_avg_cost / engine (stable on equal timestamps).
+    sorted_txns = sorted(transactions, key=lambda t: t.date)
+    shares: dict[str, float] = defaultdict(float)
+    avg_cost: dict[str, float] = defaultdict(float)
+    idx = 0
+    n = len(sorted_txns)
+    values: list[float] = []
+
+    for D in date_range:
+        d_py = pd.Timestamp(D).date()
+        while idx < n and sorted_txns[idx].date.date() <= d_py:
+            apply_avg_cost_transaction_step(shares, avg_cost, sorted_txns[idx])
+            idx += 1
+        total_cb = 0.0
+        for sym in equity_symbols:
+            if sym in shares and abs(shares[sym]) >= MIN_SHARE_THRESHOLD:
+                total_cb += avg_cost[sym] * abs(shares[sym])
+        values.append(total_cb)
+
+    return pd.Series(values, index=date_range, dtype=float)
 
 
 def walk_transactions_avg_cost(transactions: list[Transaction]) -> AccountingResult:

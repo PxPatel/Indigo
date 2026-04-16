@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import type { TimeRangePreset } from '../utils/timeRange';
+import { DEFAULT_CUSTOM_DAYS } from '../utils/timeRange';
 
 interface PortfolioStore {
   isUploaded: boolean;
@@ -12,6 +14,8 @@ interface PortfolioStore {
   fundTransferCount: number;
   hasCashAnchor: boolean;
   manualEntryModalOpen: boolean;
+  timeRangePreset: TimeRangePreset;
+  customDays: number;
   setUploaded: (symbols: string[]) => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
@@ -21,6 +25,8 @@ interface PortfolioStore {
   setFundTransferCount: (count: number) => void;
   setHasCashAnchor: (has: boolean) => void;
   setManualEntryModalOpen: (open: boolean) => void;
+  setTimeRangePreset: (preset: TimeRangePreset) => void;
+  setCustomDays: (days: number) => void;
   reset: () => void;
 }
 
@@ -37,6 +43,8 @@ export const usePortfolioStore = create<PortfolioStore>()(
       fundTransferCount: 0,
       hasCashAnchor: false,
       manualEntryModalOpen: false,
+      timeRangePreset: 'YTD',
+      customDays: DEFAULT_CUSTOM_DAYS,
       setUploaded: (symbols) => set({ isUploaded: true, symbols, error: null }),
       setLoading: (loading) => set({ isLoading: loading }),
       setError: (error) => set({ error }),
@@ -46,12 +54,27 @@ export const usePortfolioStore = create<PortfolioStore>()(
       setFundTransferCount: (count) => set({ fundTransferCount: count }),
       setHasCashAnchor: (has) => set({ hasCashAnchor: has }),
       setManualEntryModalOpen: (open) => set({ manualEntryModalOpen: open }),
-      reset: () => set({ isUploaded: false, symbols: [], error: null, manualEntryCount: 0, fundTransferCount: 0, hasCashAnchor: false }),
+      setTimeRangePreset: (preset) => set({ timeRangePreset: preset }),
+      setCustomDays: (days) => set({ customDays: Math.max(1, Math.floor(days) || 1) }),
+      reset: () =>
+        set({
+          isUploaded: false,
+          symbols: [],
+          error: null,
+          manualEntryCount: 0,
+          fundTransferCount: 0,
+          hasCashAnchor: false,
+        }),
     }),
     {
       name: 'indigo-portfolio',
       // Only persist the upload state — everything else is derived from backend on load
-      partialize: (state) => ({ isUploaded: state.isUploaded, symbols: state.symbols }),
+      partialize: (state) => ({
+        isUploaded: state.isUploaded,
+        symbols: state.symbols,
+        timeRangePreset: state.timeRangePreset,
+        customDays: state.customDays,
+      }),
     },
   ),
 );

@@ -14,6 +14,8 @@ import {
 import { useMemo } from 'react';
 import { api } from '../api/client';
 import { usePortfolioStore } from '../stores/portfolioStore';
+import { getTimeRangeBounds } from '../utils/timeRange';
+import { TimeRangeControl } from '../components/TimeRangeControl';
 import { Card } from '../components/Card';
 import { ChartTooltip } from '../components/ChartTooltip';
 import { LoadingShimmer } from '../components/LoadingShimmer';
@@ -23,11 +25,17 @@ import { formatPercent } from '../utils/format';
 const BENCHMARKS = ['SPY', 'QQQ', 'IWM', 'DIA'];
 
 export default function Benchmark() {
-  const { selectedBenchmark, setBenchmark, setManualEntryModalOpen } = usePortfolioStore();
+  const { selectedBenchmark, setBenchmark, setManualEntryModalOpen, timeRangePreset, customDays } =
+    usePortfolioStore();
+
+  const { from, to } = useMemo(
+    () => getTimeRangeBounds(timeRangePreset, customDays),
+    [timeRangePreset, customDays],
+  );
 
   const { data, isLoading } = useQuery({
-    queryKey: ['benchmark', selectedBenchmark],
-    queryFn: () => api.benchmark(selectedBenchmark),
+    queryKey: ['benchmark', selectedBenchmark, from, to],
+    queryFn: () => api.benchmark(selectedBenchmark, from, to),
   });
 
   const { data: cashAnchor, isLoading: loadingCashAnchor } = useQuery({
@@ -56,7 +64,12 @@ export default function Benchmark() {
   }, [data]);
 
   if (isLoading || !data || loadingCashAnchor || !cashAnchor) {
-    return <LoadingShimmer height={600} />;
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <TimeRangeControl />
+        <LoadingShimmer height={600} />
+      </div>
+    );
   }
 
   const { series, stats } = data;
@@ -64,6 +77,7 @@ export default function Benchmark() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <TimeRangeControl />
       {showNoAnchorWarning && (
         <div
           role="status"

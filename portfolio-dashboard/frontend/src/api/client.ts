@@ -55,10 +55,12 @@ export const api = {
     ),
   cashflow: (from?: string, to?: string) =>
     request<CashflowTimelineResponse>(`/cashflow/timeline${dateParams(from, to)}`),
-  riskMetrics: () => request<RiskMetricsResponse>('/risk/metrics'),
+  riskMetrics: (from?: string, to?: string) =>
+    request<RiskMetricsResponse>(`/risk/metrics${dateParams(from, to)}`),
   drawdown: (from?: string, to?: string) =>
     request<DrawdownResponse>(`/risk/drawdown${dateParams(from, to)}`),
-  correlation: () => request<CorrelationResponse>('/risk/correlation'),
+  correlation: (from?: string, to?: string) =>
+    request<CorrelationResponse>(`/risk/correlation${dateParams(from, to)}`),
   sector: () => request<SectorExposureResponse>('/risk/sector'),
   benchmark: (ticker: string = 'SPY', from?: string, to?: string) => {
     const p = new URLSearchParams({ benchmark: ticker });
@@ -149,6 +151,14 @@ export interface PortfolioHistoryPoint {
   cumulative_return: number;
   /** Equity MTM + implied cash when cash anchor is set */
   net_account_value?: number | null;
+  equity_cost_basis: number;
+  equity_unrealized_pnl: number;
+  /** Cumulative realized P&L through EOD (closed trades) */
+  cumulative_realized_pnl?: number;
+  /** unrealized + cumulative realized; total trading P&L */
+  equity_total_pnl?: number;
+  /** Per-day implied cash when cash anchor path; omitted or null without */
+  cash_balance?: number | null;
 }
 export interface PortfolioHistoryResponse {
   history: PortfolioHistoryPoint[];

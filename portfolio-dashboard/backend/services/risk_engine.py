@@ -48,13 +48,29 @@ class RiskEngine:
         self._spy_returns = ret
         return self._spy_returns
 
-    def compute_metrics(self) -> RiskMetricsResponse:
-        dr = self.engine.daily_returns
-        dv = wealth_series(self.engine.daily_values)
+    def compute_metrics(self, start: date | None = None, end: date | None = None) -> RiskMetricsResponse:
+        dr = filter_date_range(self.engine.daily_returns, start, end)
+        dv = filter_date_range(wealth_series(self.engine.daily_values), start, end)
+        spy_ret = filter_date_range(self._get_spy_returns(), start, end)
+
+        if len(dr) == 0 or len(dv) == 0:
+            return RiskMetricsResponse(
+                volatility_annualized=0.0,
+                volatility_30d=0.0,
+                sharpe_ratio=0.0,
+                sortino_ratio=0.0,
+                max_drawdown=0.0,
+                max_drawdown_start=None,
+                max_drawdown_end=None,
+                beta=0.0,
+                alpha=0.0,
+                var_95=0.0,
+                hhi=0.0,
+            )
 
         vol = annualized_volatility(dr)
 
-        # 30-day rolling vol (latest value)
+        # 30-day rolling vol (latest value within the selected window)
         if len(dr) >= 30:
             vol_30d = float(dr.tail(30).std() * np.sqrt(TRADING_DAYS))
         else:
@@ -64,7 +80,6 @@ class RiskEngine:
         sort = sortino_ratio(dr)
         md_val, md_start, md_end = max_drawdown(dv)
 
-        spy_ret = self._get_spy_returns()
         b = beta_against(dr, spy_ret)
 
         # Annualized returns for alpha
@@ -77,8 +92,8 @@ class RiskEngine:
         a = alpha_jensen(port_ann, bench_ann, b)
         var = value_at_risk_historical(dr)
 
-        # HHI from current weights (absolute — includes shorts)
-        weights = self.engine.daily_weights
+        # HHI from last weights in range (absolute — includes shorts)
+        weights = filter_date_range(self.engine.daily_weights, start, end)
         if not weights.empty:
             last_weights = weights.iloc[-1].values
             last_weights = last_weights[np.abs(last_weights) > 0.001]
@@ -150,7 +165,7 @@ class RiskEngine:
             rolling_beta=rolling_b,
         )
 
-    def get_correlation_matrix(self) -> CorrelationResponse:
+    def get_correlation_matrix(self, start: date | None = None, end: date | None = None) -> CorrelationResponse:
         # Only correlate current holdings, not all symbols ever traded
         symbols = sorted(s for s, qty in self.engine._shares_held.items() if qty != 0)
         if len(symbols) < 2:
@@ -163,6 +178,10 @@ class RiskEngine:
                 returns_df[symbol] = s
 
         if returns_df.empty or len(returns_df.columns) < 2:
+            return CorrelationResponse(symbols=symbols, matrix=[[1.0] * len(symbols)] * len(symbols))
+
+        returns_df = filter_date_range(returns_df, start, end)
+        if len(returns_df) < 2:
             return CorrelationResponse(symbols=symbols, matrix=[[1.0] * len(symbols)] * len(symbols))
 
         corr = returns_df.corr().fillna(0)

@@ -378,9 +378,12 @@ async def cashflow_timeline(
 
 
 @app.get("/api/v1/risk/metrics", response_model=RiskMetricsResponse)
-async def risk_metrics():
+async def risk_metrics(
+    start: Optional[date] = Query(None, alias="from"),
+    end: Optional[date] = Query(None, alias="to"),
+):
     risk = _require_risk()
-    return risk.compute_metrics()
+    return risk.compute_metrics(start, end)
 
 
 @app.get("/api/v1/risk/drawdown", response_model=DrawdownResponse)
@@ -393,9 +396,12 @@ async def risk_drawdown(
 
 
 @app.get("/api/v1/risk/correlation", response_model=CorrelationResponse)
-async def risk_correlation():
+async def risk_correlation(
+    start: Optional[date] = Query(None, alias="from"),
+    end: Optional[date] = Query(None, alias="to"),
+):
     risk = _require_risk()
-    return risk.get_correlation_matrix()
+    return risk.get_correlation_matrix(start, end)
 
 
 @app.get("/api/v1/risk/sector", response_model=SectorExposureResponse)

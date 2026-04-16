@@ -32,6 +32,26 @@ from services.market_data import (
 from utils.calculations import sharpe_ratio, max_drawdown, beta_against, filter_date_range, wealth_series
 
 
+def _cumulative_realized_eod_series(
+    index: pd.DatetimeIndex,
+    daily_cumulative_realized: dict[str, float] | None,
+) -> pd.Series:
+    """Align walk_transactions_avg_cost cumulative realized to each history index (EOD)."""
+    if not daily_cumulative_realized:
+        return pd.Series(0.0, index=index, dtype=float)
+    sorted_days = sorted(daily_cumulative_realized.keys())
+    ptr = -1
+    last = 0.0
+    out: list[float] = []
+    for dt in index:
+        ds = pd.Timestamp(dt).strftime("%Y-%m-%d")
+        while ptr + 1 < len(sorted_days) and sorted_days[ptr + 1] <= ds:
+            ptr += 1
+            last = daily_cumulative_realized[sorted_days[ptr]]
+        out.append(last)
+    return pd.Series(out, index=index, dtype=float)
+
+
 def build_summary(
     shares_held: dict[str, float],
     cost_basis: dict[str, float],
@@ -189,11 +209,13 @@ def build_history(
     daily_values: pd.DataFrame,
     start: date | None,
     end: date | None,
+    daily_cumulative_realized: dict[str, float] | None = None,
 ) -> PortfolioHistoryResponse:
     """Build daily portfolio value history with per-day and cumulative returns.
 
     `value` is signed equity MTM; `net_account_value` is set when a cash anchor
     supplies implied cash. Returns compound on wealth (net when present).
+    `equity_total_pnl` is unrealized + cumulative realized (trading P&L, no cash flows).
     """
     if daily_values.empty:
         return PortfolioHistoryResponse(history=[])
@@ -204,23 +226,50 @@ def build_history(
     total_s = total_s.loc[common]
     wealth_s = wealth_s.loc[common]
 
+    if "equity_cost_basis" in daily_values.columns:
+        basis_s = filter_date_range(daily_values["equity_cost_basis"], start, end)
+        basis_s = basis_s.reindex(common).fillna(0.0)
+    else:
+        basis_s = pd.Series(0.0, index=common)
+    has_cash_col = "cash" in daily_values.columns
+    if has_cash_col:
+        cash_s = filter_date_range(daily_values["cash"], start, end)
+        cash_s = cash_s.reindex(common)
+    else:
+        cash_s = None
+
     prev = wealth_s.shift(1)
     returns = wealth_s.pct_change()
     returns = returns.where(prev.abs() >= 1e-6, 0)
     returns = returns.fillna(0).replace([np.inf, -np.inf], 0).clip(-1, 1)
     cum_returns = (1 + returns).cumprod() - 1
 
+    cum_realized_s = _cumulative_realized_eod_series(common, daily_cumulative_realized)
+
     has_net = "net_account" in daily_values.columns
     points = []
     for i, dt in enumerate(wealth_s.index):
         nav = round(float(daily_values.loc[dt, "net_account"]), 2) if has_net else None
+        tv = round(float(total_s.loc[dt]), 2)
+        cb = round(float(basis_s.loc[dt]), 2)
+        unr = round(tv - cb, 2)
+        cum_r = round(float(cum_realized_s.loc[dt]), 2)
+        eq_total = round(unr + cum_r, 2)
+        cash_bal = None
+        if has_cash_col and cash_s is not None and pd.notna(cash_s.loc[dt]):
+            cash_bal = round(float(cash_s.loc[dt]), 2)
         points.append(
             PortfolioHistoryPoint(
                 date=dt.strftime("%Y-%m-%d"),
-                value=round(float(total_s.loc[dt]), 2),
+                value=tv,
                 daily_return=round(float(returns.iloc[i]) * 100, 4),
                 cumulative_return=round(float(cum_returns.iloc[i]) * 100, 2),
                 net_account_value=nav,
+                equity_cost_basis=cb,
+                equity_unrealized_pnl=unr,
+                cumulative_realized_pnl=cum_r,
+                equity_total_pnl=eq_total,
+                cash_balance=cash_bal,
             )
         )
     return PortfolioHistoryResponse(history=points)

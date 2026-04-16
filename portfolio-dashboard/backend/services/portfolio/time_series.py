@@ -12,6 +12,7 @@ import pandas as pd
 from datetime import date
 
 from models.schemas import Transaction
+from utils.calculations import daily_equity_cost_basis_eod_series
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +124,12 @@ class TimeSeriesBuilder:
                 f"Totals are not clamped; returns use wealth with safe pct_change guards."
             )
 
+        equity_cost_basis_full = daily_equity_cost_basis_eod_series(
+            self._transactions,
+            self._equity_symbols,
+            date_range,
+        )
+
         # Leading trim: first day with equity exposure, implied cash, or net wealth.
         if equity_cols:
             equity_gross = daily_values[equity_cols].abs().sum(axis=1)
@@ -136,6 +143,10 @@ class TimeSeriesBuilder:
         if active_leading.any():
             first_idx = active_leading[active_leading].index[0]
             daily_values = daily_values.loc[first_idx:]
+
+        daily_values["equity_cost_basis"] = equity_cost_basis_full.reindex(
+            daily_values.index
+        ).fillna(0.0)
 
         self._daily_values = daily_values
 

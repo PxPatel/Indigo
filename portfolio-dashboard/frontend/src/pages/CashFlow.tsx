@@ -13,6 +13,9 @@ import {
 import { useState, useMemo, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { api } from '../api/client';
+import { usePortfolioStore } from '../stores/portfolioStore';
+import { getTimeRangeBounds } from '../utils/timeRange';
+import { TimeRangeControl } from '../components/TimeRangeControl';
 import { MetricCard } from '../components/MetricCard';
 import { Card } from '../components/Card';
 import { ChartTooltip } from '../components/ChartTooltip';
@@ -174,9 +177,16 @@ function TradeGroup({ label, trades, color }: { label: string; trades: CashflowT
 // --- Page ---
 
 export default function CashFlow() {
+  const timeRangePreset = usePortfolioStore((s) => s.timeRangePreset);
+  const customDays = usePortfolioStore((s) => s.customDays);
+  const { from: rangeFrom, to: rangeTo } = useMemo(
+    () => getTimeRangeBounds(timeRangePreset, customDays),
+    [timeRangePreset, customDays],
+  );
+
   const { data, isLoading } = useQuery({
-    queryKey: ['cashflow'],
-    queryFn: () => api.cashflow(),
+    queryKey: ['cashflow', rangeFrom, rangeTo],
+    queryFn: () => api.cashflow(rangeFrom, rangeTo),
   });
 
   const { data: cashAnchorData } = useQuery({
@@ -239,7 +249,14 @@ export default function CashFlow() {
     [expandedDate],
   );
 
-  if (isLoading || !data) return <LoadingShimmer height={600} />;
+  if (isLoading || !data) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <TimeRangeControl />
+        <LoadingShimmer height={600} />
+      </div>
+    );
+  }
 
   const { timeline, monthly, by_symbol, stats } = data;
 
@@ -265,13 +282,14 @@ export default function CashFlow() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <TimeRangeControl />
       {/* Stats */}
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
         <MetricCard
           index={0}
           label="Net Invested"
           value={formatCurrency(stats.net_invested)}
-          tooltip="Total capital deployed (buys + deposits) minus capital returned (sells + withdrawals). Net cash you've put to work."
+          tooltip="Net from transactions only: total buy dollars minus total sell dollars. Fund transfers are not included."
         />
         <MetricCard
           index={1}

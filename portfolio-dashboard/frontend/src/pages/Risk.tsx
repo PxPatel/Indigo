@@ -12,25 +12,34 @@ import {
   CartesianGrid,
   ReferenceLine,
 } from 'recharts';
+import { useMemo } from 'react';
 import { api } from '../api/client';
 import { MetricCard } from '../components/MetricCard';
 import { Card } from '../components/Card';
 import { ChartTooltip } from '../components/ChartTooltip';
 import { LoadingShimmer } from '../components/LoadingShimmer';
+import { TimeRangeControl } from '../components/TimeRangeControl';
 import { formatMetric } from '../utils/format';
 import { usePortfolioStore } from '../stores/portfolioStore';
+import { getTimeRangeBounds } from '../utils/timeRange';
 
 export default function Risk() {
   const setManualEntryModalOpen = usePortfolioStore((s) => s.setManualEntryModalOpen);
+  const timeRangePreset = usePortfolioStore((s) => s.timeRangePreset);
+  const customDays = usePortfolioStore((s) => s.customDays);
+  const { from: rangeFrom, to: rangeTo } = useMemo(
+    () => getTimeRangeBounds(timeRangePreset, customDays),
+    [timeRangePreset, customDays],
+  );
 
   const { data: metrics, isLoading: loadingMetrics } = useQuery({
-    queryKey: ['risk-metrics'],
-    queryFn: api.riskMetrics,
+    queryKey: ['risk-metrics', rangeFrom, rangeTo],
+    queryFn: () => api.riskMetrics(rangeFrom, rangeTo),
   });
 
   const { data: drawdown, isLoading: loadingDrawdown } = useQuery({
-    queryKey: ['drawdown'],
-    queryFn: () => api.drawdown(),
+    queryKey: ['drawdown', rangeFrom, rangeTo],
+    queryFn: () => api.drawdown(rangeFrom, rangeTo),
   });
 
   const { data: cashAnchor, isLoading: loadingCashAnchor } = useQuery({
@@ -39,8 +48,8 @@ export default function Risk() {
   });
 
   const { data: correlation } = useQuery({
-    queryKey: ['correlation'],
-    queryFn: api.correlation,
+    queryKey: ['correlation', rangeFrom, rangeTo],
+    queryFn: () => api.correlation(rangeFrom, rangeTo),
   });
 
   const { data: sector } = useQuery({
@@ -48,7 +57,14 @@ export default function Risk() {
     queryFn: api.sector,
   });
 
-  if (loadingMetrics || loadingDrawdown || loadingCashAnchor) return <LoadingShimmer height={600} />;
+  if (loadingMetrics || loadingDrawdown || loadingCashAnchor) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <TimeRangeControl />
+        <LoadingShimmer height={600} />
+      </div>
+    );
+  }
   if (!metrics || !drawdown || !cashAnchor) return null;
 
   const showEquityOnlyWarning = cashAnchor.anchor === null;
@@ -70,6 +86,7 @@ export default function Risk() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <TimeRangeControl />
       {showEquityOnlyWarning && (
         <div
           role="status"
@@ -144,7 +161,7 @@ export default function Risk() {
           index={2}
           label="Beta"
           value={formatMetric(metrics.beta)}
-          tooltip="How much your portfolio moves per 1% move in the S&P 500. Calculated as Cov(portfolio, SPY) ÷ Var(SPY) over the full period."
+          tooltip="How much your portfolio moves per 1% move in the S&P 500. Calculated as Cov(portfolio, SPY) ÷ Var(SPY) over the selected time range."
         />
         <MetricCard
           index={3}
@@ -347,7 +364,11 @@ export default function Risk() {
 
           {/* Sector exposure */}
           {sector && sector.sectors.length > 0 && (
-            <Card title="Sector Exposure" index={5}>
+            <Card
+              title="Sector Exposure"
+              titleInfo="Weights reflect your current open positions, not the selected time range."
+              index={5}
+            >
               {sector.sectors.map((s) => (
                 <div key={s.sector} style={{ marginBottom: 8 }}>
                   <div style={{

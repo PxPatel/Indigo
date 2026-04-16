@@ -242,7 +242,12 @@ class PortfolioEngine:
         )
 
     def get_history(self, start: date | None = None, end: date | None = None) -> PortfolioHistoryResponse:
-        return build_history(self.daily_values, start, end)
+        return build_history(
+            self.daily_values,
+            start,
+            end,
+            daily_cumulative_realized=self._daily_cumulative_realized,
+        )
 
     def get_weights(self, start: date | None = None, end: date | None = None) -> PortfolioWeightsResponse:
         return build_weights(self.daily_weights, self.symbols, start, end)
