@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from datetime import date
+from datetime import date, timedelta
 from typing import Optional
 
 from services.portfolio_engine import PortfolioEngine
@@ -13,6 +13,12 @@ from models.schemas import (
 from utils.calculations import annualized_return, filter_date_range, TRADING_DAYS, wealth_series
 
 _WEALTH_EPS = 1e-6
+
+# Calendar-day lookback used when fetching benchmark history so we can anchor
+# the in-window rebase to the last trading-day close *before* the window start.
+# 10 days comfortably covers weekends + 3-day holiday closures without
+# bloating the fetch range.
+_BENCHMARK_LOOKBACK_DAYS = 10
 
 SUPPORTED_BENCHMARKS = {"SPY", "QQQ", "IWM", "DIA"}
 
@@ -95,7 +101,14 @@ class BenchmarkService:
         s = start or self.engine.start_date
         e = end or self.engine.end_date
 
-        bench_data = self.market.get_benchmark_data(benchmark, s, e)
+        # Fetch with a small calendar-day lookback so we can anchor the in-window
+        # rebase to the last trading close *before* the window start. The
+        # portfolio side already reflects day-1's return (engine.daily_returns
+        # is computed over the full wealth history); without this buffer the
+        # benchmark would silently discard its day-1 return by forcing the
+        # first in-window value to 100.
+        fetch_start = s - timedelta(days=_BENCHMARK_LOOKBACK_DAYS)
+        bench_data = self.market.get_benchmark_data(benchmark, fetch_start, e)
         if bench_data.empty:
             return BenchmarkCompareResponse(
                 series=[],
@@ -108,8 +121,10 @@ class BenchmarkService:
                 benchmark_ticker=benchmark,
             )
 
-        bench_close = bench_data["Close"]
-        bench_close.index = pd.to_datetime(bench_close.index).tz_localize(None)
+        bench_close_ext = bench_data["Close"]
+        bench_close_ext.index = pd.to_datetime(bench_close_ext.index).tz_localize(None)
+        # In-window view drives all existing intersection/trim/stats logic.
+        bench_close = bench_close_ext[bench_close_ext.index >= pd.Timestamp(s)]
 
         port_values = wealth_series(self.engine.daily_values)
 
@@ -167,7 +182,20 @@ class BenchmarkService:
                 index=pv.index,
             )
         port_index_series = _compound_return_index(r_use)
-        bench_price_index = (bv / float(bv.iloc[0])) * 100.0
+
+        # Rebase benchmark to the last trading-day close strictly before the
+        # first in-window day, but only when the portfolio also has a prior
+        # wealth day. That keeps the two series symmetric: if the window starts
+        # at portfolio inception, neither line can reflect a pre-window return,
+        # so we keep today's "both at 100 on day 1" behaviour.
+        first_day = pv.index[0]
+        has_prev_port = bool((self.engine.daily_values.index < first_day).any())
+        prev_bench = bench_close_ext[bench_close_ext.index < first_day]
+        if has_prev_port and not prev_bench.empty:
+            baseline = float(prev_bench.iloc[-1])
+        else:
+            baseline = float(bv.iloc[0])
+        bench_price_index = (bv / baseline) * 100.0
 
         port_indexed = filter_date_range(port_index_series, start, end)
         bench_indexed = filter_date_range(bench_price_index, start, end)
@@ -193,13 +221,20 @@ class BenchmarkService:
         if end is not None:
             aligned = aligned[aligned.index <= pd.Timestamp(end)]
 
-        # Period totals from filtered cumulative indices (matches chart window)
+        # Period totals vs the rebase baseline (= chart's implicit 100 line).
+        # Using iloc[-1]/100 instead of iloc[-1]/iloc[0] is required so the stat
+        # equals (chart_last - 100). When we rebase to the previous trading-day
+        # close, iloc[0] = 100 * (1 + first_day_return) — dividing by iloc[0]
+        # would algebraically strip the first day's return from the stat while
+        # leaving it in the chart, causing the box ↔ line mismatch. In the
+        # fallback/at-inception path iloc[0] == 100, so this formula is
+        # identical to the prior one.
         if len(port_indexed) >= 2:
-            port_total = float(port_indexed.iloc[-1] / port_indexed.iloc[0] - 1.0)
+            port_total = float(port_indexed.iloc[-1] / 100.0 - 1.0)
         else:
             port_total = 0.0
         if len(bench_indexed) >= 2:
-            bench_total = float(bench_indexed.iloc[-1] / bench_indexed.iloc[0] - 1.0)
+            bench_total = float(bench_indexed.iloc[-1] / 100.0 - 1.0)
         else:
             bench_total = 0.0
 
