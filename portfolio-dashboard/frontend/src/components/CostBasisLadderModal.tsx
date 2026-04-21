@@ -30,21 +30,24 @@ function TableSkeleton() {
 export function CostBasisLadderModal({
   symbol,
   open,
+  asOf,
   onClose,
   onExited,
 }: {
   symbol: string | null;
   open: boolean;
+  asOf?: string;
   onClose: () => void;
   onExited?: () => void;
 }) {
   const [livePrices] = useLivePrices();
+  const timeTravel = !!asOf;
   const { data, isLoading, isError } = useQuery({
-    queryKey: ['cost-ladder', symbol, livePrices],
-    queryFn: () => api.costBasisLadder(symbol!, livePrices),
+    queryKey: ['cost-ladder', symbol, livePrices, asOf ?? null],
+    queryFn: () => api.costBasisLadder(symbol!, livePrices, asOf),
     enabled: open && !!symbol,
-    staleTime: livePrices ? LIVE_SPOT_POLL_MS : undefined,
-    refetchInterval: livePrices ? LIVE_SPOT_POLL_MS : false,
+    staleTime: timeTravel ? Infinity : (livePrices ? LIVE_SPOT_POLL_MS : undefined),
+    refetchInterval: timeTravel ? false : (livePrices ? LIVE_SPOT_POLL_MS : false),
     refetchIntervalInBackground: true,
   });
 
@@ -143,6 +146,26 @@ export function CostBasisLadderModal({
                       }}
                     >
                       {data.name}
+                    </span>
+                  )}
+                  {timeTravel && (
+                    <span
+                      style={{
+                        marginLeft: 10,
+                        padding: '2px 6px',
+                        fontSize: 10,
+                        fontWeight: 700,
+                        fontFamily: 'var(--font-mono)',
+                        letterSpacing: '0.5px',
+                        textTransform: 'uppercase',
+                        color: 'var(--accent-purple, #8b5cf6)',
+                        background: 'rgba(139,92,246,0.15)',
+                        border: '1px solid var(--accent-purple, #8b5cf6)',
+                        borderRadius: 4,
+                        verticalAlign: 'middle',
+                      }}
+                    >
+                      As of {asOf}
                     </span>
                   )}
                 </div>

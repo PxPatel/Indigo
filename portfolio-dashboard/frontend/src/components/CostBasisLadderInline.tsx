@@ -8,19 +8,22 @@ import { LadderStat } from './LadderStat';
 export function CostBasisLadderInline({
   symbol,
   enabled,
+  asOf,
   onOpenDetail,
 }: {
   symbol: string;
   enabled: boolean;
+  asOf?: string;
   onOpenDetail: () => void;
 }) {
   const [livePrices] = useLivePrices();
+  const timeTravel = !!asOf;
   const { data, isLoading, isError } = useQuery({
-    queryKey: ['cost-ladder', symbol, livePrices],
-    queryFn: () => api.costBasisLadder(symbol, livePrices),
+    queryKey: ['cost-ladder', symbol, livePrices, asOf ?? null],
+    queryFn: () => api.costBasisLadder(symbol, livePrices, asOf),
     enabled: enabled && !!symbol,
-    staleTime: livePrices ? LIVE_SPOT_POLL_MS : undefined,
-    refetchInterval: livePrices ? LIVE_SPOT_POLL_MS : false,
+    staleTime: timeTravel ? Infinity : (livePrices ? LIVE_SPOT_POLL_MS : undefined),
+    refetchInterval: timeTravel ? false : (livePrices ? LIVE_SPOT_POLL_MS : false),
     refetchIntervalInBackground: true,
   });
 

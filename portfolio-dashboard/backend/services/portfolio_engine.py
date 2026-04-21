@@ -40,9 +40,11 @@ from services.portfolio.response_builders import (
     build_history,
     build_weights,
     build_holdings,
+    build_holdings_as_of,
 )
 from services.portfolio.cashflow import CashflowService
 from services.portfolio.query import QueryService
+from services.portfolio.as_of import close_at_or_before, prior_close
 from utils.calculations import walk_transactions_avg_cost, MIN_SHARE_THRESHOLD
 from utils.fifo_lots import (
     compute_fifo_open_lots,
@@ -264,42 +266,114 @@ class PortfolioEngine:
             market=self.market,
         )
 
-    def get_cost_basis_ladder(self, symbol: str) -> CostBasisLadderResponse:
+    def get_holdings_as_of(self, as_of: date) -> HoldingsResponse:
+        """Replay transactions up to and including `as_of` and return historical holdings.
+
+        Uses the engine's already-cached `_prices` for close-price lookups (no yfinance calls).
+        Option-expiry synthetics live at their expiry date, so slicing by `as_of` naturally
+        excludes synthetics whose expiry is after `as_of` — options that were open on that
+        date remain open.
+        """
+        if as_of < self.start_date:
+            raise ValueError(
+                f"as_of ({as_of.isoformat()}) is before the earliest transaction date "
+                f"({self.start_date.isoformat()})"
+            )
+        if as_of > date.today():
+            raise ValueError("as_of cannot be in the future")
+
+        sliced = [t for t in self._accounting_transactions if t.date.date() <= as_of]
+        result = walk_transactions_avg_cost(sliced)
+
+        def lookup(symbol: str) -> tuple[float | None, float | None]:
+            close, _ = close_at_or_before(self._prices, symbol, as_of)
+            prev = prior_close(self._prices, symbol, as_of)
+            return close, prev
+
+        return build_holdings_as_of(
+            shares_held=result.shares_held,
+            avg_cost=result.avg_cost_per_share,
+            cost_basis=result.total_cost_basis,
+            last_activity=result.last_activity,
+            processed_transactions=sliced,
+            close_lookup=lookup,
+            stock_info=self._stock_info,
+            as_of=as_of,
+        )
+
+    def get_cost_basis_ladder(
+        self,
+        symbol: str,
+        as_of: date | None = None,
+    ) -> CostBasisLadderResponse:
         sym = symbol.strip().upper()
-        if sym not in self._shares_held:
+        # Slice transactions to as_of if provided; otherwise use the full engine state.
+        if as_of is not None:
+            if as_of < self.start_date:
+                raise ValueError(
+                    f"as_of ({as_of.isoformat()}) is before the earliest transaction date "
+                    f"({self.start_date.isoformat()})"
+                )
+            if as_of > date.today():
+                raise ValueError("as_of cannot be in the future")
+            txns_for_walk = [
+                t for t in self._accounting_transactions if t.date.date() <= as_of
+            ]
+            walk = walk_transactions_avg_cost(txns_for_walk)
+            shares_held_map = walk.shares_held
+            cost_basis_map = walk.total_cost_basis
+            option_syms = {
+                t.symbol for t in txns_for_walk if t.instrument_type == "option"
+            }
+        else:
+            txns_for_walk = self._accounting_transactions
+            shares_held_map = self._shares_held
+            cost_basis_map = self._cost_basis
+            option_syms = self._option_symbols
+
+        if sym not in shares_held_map:
             raise ValueError("Symbol not in portfolio holdings")
-        shares = self._shares_held[sym]
+        shares = shares_held_map[sym]
         if shares <= MIN_SHARE_THRESHOLD:
             raise ValueError("Cost basis ladder is only available for long equity positions")
-        if sym in self._option_symbols:
+        if sym in option_syms:
             raise ValueError("Cost basis ladder is not available for options")
 
-        lots_int = compute_fifo_open_lots(self._accounting_transactions, sym)
+        lots_int = compute_fifo_open_lots(txns_for_walk, sym)
         if not lots_int:
             raise ValueError("Could not reconstruct open lots for this symbol")
 
-        price = self.market.get_current_price(sym)
         info = self._stock_info.get(sym, {})
         name = info.get("name", sym)
 
         today_pct = 0.0
         prev_close: float | None = None
-        # Prior close from a fresh 7d window (same as holdings / summary), not engine _prices.
-        day_start = date.today() - timedelta(days=7)
-        recent = self.market.get_historical_prices_batch([sym], day_start, date.today())
-        ohlc_df = recent.get(sym)
-        if ohlc_df is None or ohlc_df.empty:
-            ohlc_df = self._prices.get(sym)
-        if ohlc_df is not None and not ohlc_df.empty and sym in ohlc_df.columns:
-            p = ohlc_df[sym].dropna()
-            today_ts = pd.Timestamp(date.today())
-            prior = p[p.index < today_ts]
-            if prior.empty:
-                prior = p
-            if not prior.empty:
-                prev_close = float(prior.iloc[-1])
-                if prev_close > 0:
-                    today_pct = (price / prev_close - 1) * 100
+
+        if as_of is not None:
+            # Historical close + prior trading day from cached _prices.
+            close_val, _ = close_at_or_before(self._prices, sym, as_of)
+            price = float(close_val) if close_val is not None else 0.0
+            prev_close = prior_close(self._prices, sym, as_of)
+            if prev_close is not None and prev_close > 0 and price > 0:
+                today_pct = (price / prev_close - 1) * 100
+        else:
+            price = self.market.get_current_price(sym)
+            # Prior close from a fresh 7d window (same as holdings / summary), not engine _prices.
+            day_start = date.today() - timedelta(days=7)
+            recent = self.market.get_historical_prices_batch([sym], day_start, date.today())
+            ohlc_df = recent.get(sym)
+            if ohlc_df is None or ohlc_df.empty:
+                ohlc_df = self._prices.get(sym)
+            if ohlc_df is not None and not ohlc_df.empty and sym in ohlc_df.columns:
+                p = ohlc_df[sym].dropna()
+                today_ts = pd.Timestamp(date.today())
+                prior = p[p.index < today_ts]
+                if prior.empty:
+                    prior = p
+                if not prior.empty:
+                    prev_close = float(prior.iloc[-1])
+                    if prev_close > 0:
+                        today_pct = (price / prev_close - 1) * 100
 
         if prev_close is not None and prev_close > 0:
             today_dollars = abs(shares) * (price - prev_close)
@@ -307,7 +381,7 @@ class PortfolioEngine:
             today_dollars = abs(shares) * price * (today_pct / 100) if today_pct else 0.0
 
         # Match Holdings unrealized P&L (average-cost basis), not a FIFO-only rollup.
-        cb = self._cost_basis.get(sym, 0.0)
+        cb = cost_basis_map.get(sym, 0.0)
         mv = abs(shares) * price
         unrealized = mv - cb
         unrealized_pct = (unrealized / cb * 100) if cb > 1e-10 else 0.0
@@ -322,7 +396,7 @@ class PortfolioEngine:
         else:
             avg_interval_between_lot_prices = None
 
-        buy_dates = collect_buy_dates_for_symbol(self._accounting_transactions, sym)
+        buy_dates = collect_buy_dates_for_symbol(txns_for_walk, sym)
         avg_days = avg_calendar_days_between_buys(buy_dates)
 
         lot_rows: list[FifoLotRow] = []
@@ -369,6 +443,7 @@ class PortfolioEngine:
             open_lot_count=len(lots_int),
             lots=lot_rows,
             merged_levels=merged_levels,
+            as_of=as_of.isoformat() if as_of is not None else None,
         )
 
     @property

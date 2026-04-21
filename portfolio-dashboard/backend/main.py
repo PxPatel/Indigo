@@ -349,19 +349,36 @@ async def portfolio_weights(
 
 
 @app.get("/api/v1/portfolio/holdings", response_model=HoldingsResponse)
-async def portfolio_holdings(live: bool = Query(True)):
+async def portfolio_holdings(
+    live: bool = Query(True),
+    as_of: Optional[date] = Query(None),
+):
     engine = _require_engine()
-    with live_prices_scope(live):
-        return engine.get_holdings()
+    if as_of is not None:
+        try:
+            resp = engine.get_holdings_as_of(as_of)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+    else:
+        with live_prices_scope(live):
+            resp = engine.get_holdings()
+    resp.earliest_date = engine.start_date.isoformat()
+    return resp
 
 
 @app.get(
     "/api/v1/portfolio/holdings/{symbol}/cost-ladder",
     response_model=CostBasisLadderResponse,
 )
-async def portfolio_cost_basis_ladder(symbol: str, live: bool = Query(True)):
+async def portfolio_cost_basis_ladder(
+    symbol: str,
+    live: bool = Query(True),
+    as_of: Optional[date] = Query(None),
+):
     engine = _require_engine()
     try:
+        if as_of is not None:
+            return engine.get_cost_basis_ladder(symbol, as_of=as_of)
         with live_prices_scope(live):
             return engine.get_cost_basis_ladder(symbol)
     except ValueError as e:

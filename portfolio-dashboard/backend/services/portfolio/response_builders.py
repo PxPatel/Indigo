@@ -9,7 +9,7 @@ All calculation logic is preserved exactly from the original methods.
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
-from typing import Callable
+from typing import Callable, Optional
 
 import numpy as np
 import pandas as pd
@@ -426,4 +426,99 @@ def build_holdings(
         total_market_value=round(total_mv, 2),
         total_pnl_dollars=round(total_pnl, 2),
         total_pnl_percent=round(total_pnl_pct, 2),
+    )
+
+
+def build_holdings_as_of(
+    shares_held: dict[str, float],
+    avg_cost: dict[str, float],
+    cost_basis: dict[str, float],
+    last_activity: dict[str, str],
+    processed_transactions: list[Transaction],
+    close_lookup: Callable[[str], tuple[Optional[float], Optional[float]]],
+    stock_info: dict[str, dict],
+    as_of: date,
+) -> HoldingsResponse:
+    """Holdings snapshot as of a past date.
+
+    Uses the provided close_lookup (returns (close_at_or_before_as_of, prior_close))
+    instead of live prices. today_change_percent becomes the one-day close-to-close
+    change ending on as_of (flipped for shorts), so the UI labels it "Day Change"
+    when in time-travel mode.
+
+    Options: no historical OCC-symbol prices are available, so price/pnl stay 0
+    (matches live-mode behavior for options).
+    """
+    symbol_instrument: dict[str, str] = {}
+    for t in processed_transactions:
+        symbol_instrument[t.symbol] = t.instrument_type
+
+    holdings: list[HoldingDetail] = []
+    total_mv = 0.0
+    total_pnl = 0.0
+
+    for symbol, shares in shares_held.items():
+        if shares == 0:
+            continue
+        is_short = shares < 0
+        is_option = symbol_instrument.get(symbol, "stock") == "option"
+
+        if is_option:
+            price = 0.0
+            cb = cost_basis.get(symbol, 0)
+            mv = cb
+            pnl = 0.0
+            pnl_pct = 0.0
+            day_pct = 0.0
+            info: dict = {}
+        else:
+            close, prev = close_lookup(symbol)
+            price = float(close) if close is not None else 0.0
+            cb = cost_basis.get(symbol, 0)
+            mv = abs(shares) * price
+            pnl = (cb - mv) if is_short else (mv - cb)
+            pnl_pct = (pnl / cb * 100) if cb > 0 else 0
+            day_pct = 0.0
+            if prev is not None and prev > 0 and price > 0:
+                raw_pct = (price / prev - 1) * 100
+                day_pct = -raw_pct if is_short else raw_pct
+            info = stock_info.get(symbol, {})
+
+        total_mv += mv
+        total_pnl += pnl
+
+        holdings.append(HoldingDetail(
+            symbol=symbol,
+            name=info.get("name", symbol) if not is_option else symbol,
+            shares=round(shares, 4),
+            avg_cost=round(avg_cost.get(symbol, 0), 2),
+            current_price=round(price, 2),
+            market_value=round(mv, 2),
+            cost_basis=round(cb, 2),
+            pnl_dollars=round(pnl, 2),
+            pnl_percent=round(pnl_pct, 2),
+            weight=0,
+            today_change_percent=round(day_pct, 2),
+            sector=info.get("sector", "Options") if not is_option else "Options",
+            last_activity=last_activity.get(symbol, ""),
+            instrument_type=symbol_instrument.get(symbol, "stock"),
+        ))
+
+    for h in holdings:
+        h.weight = round(h.market_value / total_mv * 100, 2) if total_mv > 0 else 0
+
+    holdings.sort(key=lambda h: h.market_value, reverse=True)
+
+    total_pnl_pct = (
+        (total_pnl / (total_mv - total_pnl) * 100)
+        if (total_mv - total_pnl) > 0
+        else 0
+    )
+
+    return HoldingsResponse(
+        holdings=holdings,
+        total_market_value=round(total_mv, 2),
+        total_pnl_dollars=round(total_pnl, 2),
+        total_pnl_percent=round(total_pnl_pct, 2),
+        as_of=as_of.isoformat(),
     )

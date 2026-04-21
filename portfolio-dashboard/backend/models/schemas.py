@@ -93,6 +93,8 @@ class HoldingsResponse(BaseModel):
     total_market_value: float
     total_pnl_dollars: float
     total_pnl_percent: float
+    as_of: Optional[str] = None
+    earliest_date: Optional[str] = None
 
 
 class CostBasisMergedLevel(BaseModel):
@@ -124,6 +126,7 @@ class CostBasisLadderResponse(BaseModel):
     open_lot_count: int
     lots: list[FifoLotRow]
     merged_levels: list[CostBasisMergedLevel]
+    as_of: Optional[str] = None
     ladder_intro: str = (
         "Each bar is open shares still held at a buy price after applying sells in FIFO order. "
     )

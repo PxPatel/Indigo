@@ -32,6 +32,13 @@ function liveParam(live: boolean): string {
   return `?${p.toString()}`;
 }
 
+function holdingsParams(live: boolean, asOf?: string): string {
+  const p = new URLSearchParams();
+  p.set('live', live ? 'true' : 'false');
+  if (asOf) p.set('as_of', asOf);
+  return `?${p.toString()}`;
+}
+
 export const api = {
   status: () => request<{ has_data: boolean }>('/status'),
   upload(files: File[]) {
@@ -47,11 +54,11 @@ export const api = {
     request<PortfolioHistoryResponse>(`/portfolio/history${dateParams(from, to)}`),
   weights: (from?: string, to?: string) =>
     request<PortfolioWeightsResponse>(`/portfolio/weights${dateParams(from, to)}`),
-  holdings: (live = true) =>
-    request<HoldingsResponse>(`/portfolio/holdings${liveParam(live)}`),
-  costBasisLadder: (symbol: string, live = true) =>
+  holdings: (live = true, asOf?: string) =>
+    request<HoldingsResponse>(`/portfolio/holdings${holdingsParams(live, asOf)}`),
+  costBasisLadder: (symbol: string, live = true, asOf?: string) =>
     request<CostBasisLadderResponse>(
-      `/portfolio/holdings/${encodeURIComponent(symbol)}/cost-ladder${liveParam(live)}`,
+      `/portfolio/holdings/${encodeURIComponent(symbol)}/cost-ladder${holdingsParams(live, asOf)}`,
     ),
   cashflow: (from?: string, to?: string) =>
     request<CashflowTimelineResponse>(`/cashflow/timeline${dateParams(from, to)}`),
@@ -194,6 +201,8 @@ export interface HoldingsResponse {
   total_market_value: number;
   total_pnl_dollars: number;
   total_pnl_percent: number;
+  as_of?: string | null;
+  earliest_date?: string | null;
 }
 
 export interface CostBasisMergedLevel {
@@ -225,6 +234,7 @@ export interface CostBasisLadderResponse {
   open_lot_count: number;
   lots: FifoLotRow[];
   merged_levels: CostBasisMergedLevel[];
+  as_of?: string | null;
   ladder_intro: string;
   footnote: string;
 }
