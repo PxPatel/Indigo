@@ -99,7 +99,7 @@ class QueryService:
         return TransactionsResponse(transactions=records, stats=stats)
 
     def get_snapshot_weights(self, target_date: date) -> tuple[str, dict[str, float]]:
-        """Return portfolio weights (fractions 0–1) for the most recent trading day at or before target_date.
+        """Return portfolio weights (fractions 0–1) for the trading day before target_date.
 
         Used by AttributionService to get start-of-day weights for return attribution.
         """
@@ -108,7 +108,7 @@ class QueryService:
             return target_date.isoformat(), {}
 
         cutoff = pd.Timestamp(target_date)
-        available = df[df.index <= cutoff]
+        available = df[df.index < cutoff]
         if available.empty:
             available = df   # fall back to earliest available if target is before portfolio start
 

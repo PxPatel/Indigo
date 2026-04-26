@@ -54,8 +54,6 @@ class AttributionService:
             cash_balance = 0.0
             total_account = 0.0
         cash_weight_pct = (cash_balance / total_account * 100) if total_account > 0 else 0.0
-        # Equity weights sum to 1.0 within equity; scale down to reflect cash share
-        equity_fraction = (equity_value / total_account) if total_account > 0 else 1.0
 
         # 3. Sector map
         sectors = self._engine.get_holding_sectors()
@@ -72,8 +70,8 @@ class AttributionService:
         for symbol, weight_frac in weight_fractions.items():
             if abs(weight_frac) < 1e-12:
                 continue
-            # Adjusted weight as % of total account (equity + cash)
-            adj_weight_pct = weight_frac * equity_fraction * 100
+            # daily_weights are already account-level weights when cash is present.
+            adj_weight_pct = weight_frac * 100
             ret_pct = returns.get(symbol, 0.0)
             # Contribution in percentage points: (weight / 100) × return
             contribution = (adj_weight_pct / 100) * ret_pct
