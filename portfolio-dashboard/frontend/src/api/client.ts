@@ -121,6 +121,12 @@ export const api = {
     ),
   simulator: (benchmark: string = 'SPY') =>
     request<SimulatorResponse>(`/simulator/holdings?benchmark=${encodeURIComponent(benchmark)}`),
+  webullCsvApiDiff: (body: WebullDiffRequest) =>
+    request<WebullCsvApiDiffResponse>('/webull/csv-api-diff', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
 };
 
 // Types matching backend schemas
@@ -130,6 +136,55 @@ export interface UploadResponse {
   date_range_start: string;
   date_range_end: string;
   total_invested: number;
+}
+
+export type WebullDiffStrategy = 'since_csv_last' | 'from_csv_first' | 'full_backfill';
+
+export interface WebullDiffRequest {
+  strategy?: WebullDiffStrategy;
+  account_id?: string | null;
+}
+
+export interface WebullUniformFillRow {
+  source: 'csv' | 'api';
+  row_index: number;
+  symbol: string;
+  side: 'BUY' | 'SELL';
+  quantity: number;
+  price: number;
+  total_amount: number;
+  instrument_type: 'stock' | 'option';
+  filled_at_utc: string;
+  filled_at_est: string;
+  combo_type?: string | null;
+  client_order_id?: string | null;
+  order_id?: string | null;
+}
+
+export interface WebullDiffMatch {
+  csv_row_index: number;
+  api_row_index: number;
+  time_delta_ms: number;
+}
+
+export interface WebullFetchWindowMeta {
+  start_date: string;
+  end_date: string;
+  group_count: number;
+}
+
+export interface WebullCsvApiDiffResponse {
+  strategy: string;
+  account_id: string;
+  time_note: string;
+  windows: WebullFetchWindowMeta[];
+  api_group_count: number;
+  csv_rows: WebullUniformFillRow[];
+  api_rows: WebullUniformFillRow[];
+  matches: WebullDiffMatch[];
+  unmatched_csv_indices: number[];
+  unmatched_api_indices: number[];
+  fetch_warnings?: string[];
 }
 
 export interface PortfolioSummary {

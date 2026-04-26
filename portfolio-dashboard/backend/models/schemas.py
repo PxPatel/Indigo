@@ -409,3 +409,58 @@ class AttributionResponse(BaseModel):
     sector_contributions: list[SectorContribution]
     is_estimated: bool   # True when today has no data and we fell back to a prior date
     data_date: str       # actual date data was pulled for
+
+
+# --- Webull OpenAPI (dev diff / future ingestion) ---
+
+WebullDiffStrategy = Literal["since_csv_last", "from_csv_first", "full_backfill"]
+
+
+class WebullDiffRequest(BaseModel):
+    strategy: WebullDiffStrategy = "from_csv_first"
+    account_id: Optional[str] = None  # else WEBULL_ACCOUNT_ID env
+
+
+class WebullUniformFillRow(BaseModel):
+    """One normalized fill for side-by-side CSV vs API comparison."""
+
+    source: Literal["csv", "api"]
+    row_index: int
+    symbol: str
+    side: Literal["BUY", "SELL"]
+    quantity: float
+    price: float
+    total_amount: float
+    instrument_type: Literal["stock", "option"]
+    filled_at_utc: str
+    filled_at_est: str
+    combo_type: Optional[str] = None
+    client_order_id: Optional[str] = None
+    order_id: Optional[str] = None
+
+
+class WebullDiffMatch(BaseModel):
+    csv_row_index: int
+    api_row_index: int
+    time_delta_ms: int
+
+
+class WebullFetchWindowMeta(BaseModel):
+    start_date: str
+    end_date: str
+    group_count: int
+
+
+class WebullCsvApiDiffResponse(BaseModel):
+    strategy: str
+    account_id: str
+    time_note: str
+    windows: list[WebullFetchWindowMeta]
+    api_group_count: int
+    csv_rows: list[WebullUniformFillRow]
+    api_rows: list[WebullUniformFillRow]
+    matches: list[WebullDiffMatch]
+    unmatched_csv_indices: list[int]
+    unmatched_api_indices: list[int]
+    # e.g. start_date clamped/skipped for Webull ~2y rolling lookback from today
+    fetch_warnings: list[str] = []

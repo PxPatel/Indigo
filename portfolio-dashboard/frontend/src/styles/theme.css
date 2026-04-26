@@ -65,3 +65,9 @@ html, body, #root {
 .text-loss {
   color: var(--accent-red);
 }
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

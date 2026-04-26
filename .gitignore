@@ -42,6 +42,7 @@ dist-ssr/
 .env
 .env.*
 !.env.example
+scripts/env.local
 
 # IDE / editors
 .idea/
@@ -53,3 +54,6 @@ dist-ssr/
 *.log
 tmp/
 temp/
+
+# Raw Webull OpenAPI JSON captures (order history pages)
+portfolio-dashboard/backend/data/webull_api_raw/

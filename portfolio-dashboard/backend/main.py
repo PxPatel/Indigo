@@ -1,8 +1,39 @@
+from pathlib import Path
+
+_backend_dir = Path(__file__).resolve().parent
+_portfolio_dir = _backend_dir.parent
+
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    load_dotenv = None
+
+if load_dotenv is not None:
+    load_dotenv(_backend_dir / ".env")
+    load_dotenv(_portfolio_dir / ".env")
+    for path in (
+        _portfolio_dir / ".env.local",
+        _portfolio_dir / "env.local",
+        _backend_dir / ".env.local",
+        _backend_dir / "env.local",
+        Path.cwd() / ".env.local",
+        Path.cwd() / "env.local",
+    ):
+        load_dotenv(path, override=True)
+
+# WEBULL_* — always parse with utf-8-sig / CRLF-safe logic (works even if python-dotenv
+# is not installed in the interpreter that runs uvicorn).
+from services.webull.local_env import merge_webull_env_from_paths, standard_webull_env_paths
+
+merge_webull_env_from_paths(standard_webull_env_paths(_backend_dir, _portfolio_dir), override=True)
+
 from fastapi import FastAPI, UploadFile, File, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import date, datetime
 from typing import Optional
 import io
+
+import requests
 
 from services.csv_parser import parse_csv
 from services.portfolio_engine import PortfolioEngine
@@ -39,7 +70,10 @@ from models.schemas import (
     SymbolChartResponse,
     SimulatorResponse,
     CostBasisLadderResponse,
+    WebullCsvApiDiffResponse,
+    WebullDiffRequest,
 )
+from services.webull.diff_job import run_csv_api_diff
 
 app = FastAPI(title="Portfolio Command Center", version="1.0.0")
 
@@ -184,6 +218,20 @@ async def upload_csv(files: list[UploadFile] = File(...)):
         date_range_end=transactions[-1].date.date().isoformat(),
         total_invested=float(engine.cumulative_invested),
     )
+
+
+@app.post("/api/v1/webull/csv-api-diff", response_model=WebullCsvApiDiffResponse)
+async def webull_csv_api_diff(body: WebullDiffRequest):
+    """Dev tool: fetch Webull order history vs uploaded CSV with greedy timestamp matching."""
+    try:
+        return run_csv_api_diff(_csv_transactions, body)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except requests.RequestException as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Webull HTTP error: {e}",
+        ) from e
 
 
 # --- Manual entries ---

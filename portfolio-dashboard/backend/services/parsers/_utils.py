@@ -46,6 +46,34 @@ def _is_option(symbol: str) -> bool:
     return bool(_OPTION_RE.match(symbol))
 
 
+def build_occ_option_symbol(
+    underlying: str,
+    expire_yyyy_mm_dd: str,
+    put_or_call: str,
+    strike: str | float,
+) -> str:
+    """Build OCC-style option ticker: {root}{YYMMDD}{P|C}{strike×1000:08d}.
+
+    Matches Webull CSV / yfinance style (e.g. ORCL260417P00155000).
+    """
+    root = underlying.strip().upper()
+    if not root:
+        raise ValueError("underlying required")
+    d = datetime.strptime(expire_yyyy_mm_dd.strip()[:10], "%Y-%m-%d").date()
+    yymmdd = d.strftime("%y%m%d")
+    pc = put_or_call.strip().upper()
+    if pc in ("PUT", "P"):
+        oc = "P"
+    elif pc in ("CALL", "C"):
+        oc = "C"
+    else:
+        oc = "P" if pc.startswith("P") else "C"
+    strike_f = float(str(strike).strip().replace(",", ""))
+    strike_int = int(round(Decimal(str(strike_f)) * Decimal(1000)))
+    strike8 = f"{strike_int:08d}"
+    return f"{root}{yymmdd}{oc}{strike8}"
+
+
 def _parse_option_expiry(symbol: str) -> date | None:
     """Extract the expiration date from an OCC option symbol.
 

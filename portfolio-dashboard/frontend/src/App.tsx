@@ -20,6 +20,7 @@ const Benchmark = lazy(() => import('./pages/Benchmark'));
 const Simulator = lazy(() => import('./pages/Simulator'));
 const Charts = lazy(() => import('./pages/Charts'));
 const Transactions = lazy(() => import('./pages/Transactions'));
+const WebullCsvApiDiff = lazy(() => import('./pages/WebullCsvApiDiff'));
 
 const queryClient = new QueryClient({
   queryCache: new QueryCache({
@@ -87,6 +88,7 @@ function DashboardLayout() {
             <Route path="/simulator" element={<Simulator />} />
             <Route path="/charts" element={<Charts />} />
             <Route path="/transactions" element={<Transactions />} />
+            <Route path="/webull-diff" element={<WebullCsvApiDiff />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </Suspense>

@@ -1,0 +1,3 @@
+# Ad-hoc Webull API spike (scripts/webull_api_spike.py)
+python-dotenv>=1.0.0
+requests>=2.31.0

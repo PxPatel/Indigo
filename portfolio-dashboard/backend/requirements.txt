@@ -7,3 +7,5 @@ scipy
 python-multipart
 pydantic
 pytest
+requests
+python-dotenv
