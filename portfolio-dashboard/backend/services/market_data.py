@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import date, datetime, timedelta
+from typing import Literal
 from zoneinfo import ZoneInfo
 
 import yfinance as yf
@@ -31,29 +32,48 @@ _TTL_INTRADAY = 45           # intraday must refresh often while the tape is mov
 _NY = ZoneInfo("America/New_York")
 _TTL_STOCK_INFO = 7200      # 12 hours — name/sector rarely change
 
-# Spot price TTL: per-request toggle via `live_prices_scope` / `?live=`.
+# Spot price TTL: per-request toggle via `price_refresh_scope` / `?price_mode=`.
 TTL_CURRENT_PRICE_LIVE = 60        # live feed on
-TTL_CURRENT_PRICE_RELAXED = 300    # live feed off (5 minutes)
+TTL_CURRENT_PRICE_RELAXED = 300    # slow feed (5 minutes)
+TTL_CURRENT_PRICE_FROZEN = 365 * 24 * 60 * 60  # no-update mode; reuse existing spot cache
 
-_LIVE_PRICES_ENABLED: ContextVar[bool] = ContextVar("_LIVE_PRICES_ENABLED", default=True)
+PriceRefreshMode = Literal["live", "slow", "off"]
+
+_PRICE_REFRESH_MODE: ContextVar[PriceRefreshMode] = ContextVar("_PRICE_REFRESH_MODE", default="live")
 
 
 def live_prices_enabled() -> bool:
-    return _LIVE_PRICES_ENABLED.get()
+    return _PRICE_REFRESH_MODE.get() == "live"
+
+
+def price_refresh_mode() -> PriceRefreshMode:
+    return _PRICE_REFRESH_MODE.get()
 
 
 def current_price_ttl_for_request() -> int:
-    return TTL_CURRENT_PRICE_LIVE if _LIVE_PRICES_ENABLED.get() else TTL_CURRENT_PRICE_RELAXED
+    mode = _PRICE_REFRESH_MODE.get()
+    if mode == "live":
+        return TTL_CURRENT_PRICE_LIVE
+    if mode == "slow":
+        return TTL_CURRENT_PRICE_RELAXED
+    return TTL_CURRENT_PRICE_FROZEN
+
+
+@contextmanager
+def price_refresh_scope(mode: PriceRefreshMode):
+    """Set live, slow, or frozen spot price cache TTL for this request."""
+    token = _PRICE_REFRESH_MODE.set(mode)
+    try:
+        yield
+    finally:
+        _PRICE_REFRESH_MODE.reset(token)
 
 
 @contextmanager
 def live_prices_scope(enabled: bool):
-    """Set live (60s) vs relaxed (5m) spot price cache TTL for this request."""
-    token = _LIVE_PRICES_ENABLED.set(enabled)
-    try:
+    """Backward-compatible bool scope: live (60s) vs slow (5m)."""
+    with price_refresh_scope("live" if enabled else "slow"):
         yield
-    finally:
-        _LIVE_PRICES_ENABLED.reset(token)
 
 
 def _filter_us_regular_hours(df: pd.DataFrame) -> pd.DataFrame:

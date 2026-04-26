@@ -1,7 +1,7 @@
 import React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
-import { useLivePrices, LIVE_SPOT_POLL_MS } from '../hooks/useLivePrices';
+import { useLivePrices, priceRefreshInterval, priceRefreshStaleTime } from '../hooks/useLivePrices';
 import type { AttributionResponse } from '../api/client';
 import { Card } from './Card';
 import { LoadingShimmer } from './LoadingShimmer';
@@ -52,7 +52,7 @@ function ContributionBar({ value, max }: { value: number; max: number }) {
 }
 
 function AttributionContent({ data }: { data: AttributionResponse }) {
-  const { contributors, portfolio_return, cash_weight, top_sector, is_estimated, data_date } = data;
+  const { contributors, portfolio_return, cash_weight, top_sector, data_date } = data;
 
   const maxContrib = Math.max(...contributors.map(c => Math.abs(c.contribution)), 0.0001);
 
@@ -167,11 +167,12 @@ function AttributionContent({ data }: { data: AttributionResponse }) {
 }
 
 export function AttributionCard({ index, style }: { index: number; style?: React.CSSProperties }) {
-  const [livePrices] = useLivePrices();
+  const [priceMode] = useLivePrices();
   const { data, isLoading, isError } = useQuery({
-    queryKey: ['attribution', livePrices],
-    queryFn: () => api.attribution(livePrices),
-    staleTime: livePrices ? LIVE_SPOT_POLL_MS : 5 * 60 * 1000,
+    queryKey: ['attribution', priceMode],
+    queryFn: () => api.attribution(priceMode),
+    staleTime: priceRefreshStaleTime(priceMode),
+    refetchInterval: priceRefreshInterval(priceMode),
     retry: 1,
   });
 

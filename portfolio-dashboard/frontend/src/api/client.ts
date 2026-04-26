@@ -1,5 +1,7 @@
 const BASE = '/api/v1';
 
+export type PriceRefreshMode = 'live' | 'slow' | 'off';
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${url}`, init);
   if (!res.ok) {
@@ -26,15 +28,15 @@ function chartQueryParams(from?: string, to?: string, timeframe?: string): strin
   return s ? `?${s}` : '';
 }
 
-function liveParam(live: boolean): string {
+function priceModeParam(mode: PriceRefreshMode): string {
   const p = new URLSearchParams();
-  p.set('live', live ? 'true' : 'false');
+  p.set('price_mode', mode);
   return `?${p.toString()}`;
 }
 
-function holdingsParams(live: boolean, asOf?: string): string {
+function holdingsParams(mode: PriceRefreshMode, asOf?: string): string {
   const p = new URLSearchParams();
-  p.set('live', live ? 'true' : 'false');
+  p.set('price_mode', mode);
   if (asOf) p.set('as_of', asOf);
   return `?${p.toString()}`;
 }
@@ -48,17 +50,17 @@ export const api = {
     }
     return request<UploadResponse>('/upload', { method: 'POST', body: form });
   },
-  summary: (live = true) =>
-    request<PortfolioSummary>(`/portfolio/summary${liveParam(live)}`),
+  summary: (mode: PriceRefreshMode = 'live') =>
+    request<PortfolioSummary>(`/portfolio/summary${priceModeParam(mode)}`),
   history: (from?: string, to?: string) =>
     request<PortfolioHistoryResponse>(`/portfolio/history${dateParams(from, to)}`),
   weights: (from?: string, to?: string) =>
     request<PortfolioWeightsResponse>(`/portfolio/weights${dateParams(from, to)}`),
-  holdings: (live = true, asOf?: string) =>
-    request<HoldingsResponse>(`/portfolio/holdings${holdingsParams(live, asOf)}`),
-  costBasisLadder: (symbol: string, live = true, asOf?: string) =>
+  holdings: (mode: PriceRefreshMode = 'live', asOf?: string) =>
+    request<HoldingsResponse>(`/portfolio/holdings${holdingsParams(mode, asOf)}`),
+  costBasisLadder: (symbol: string, mode: PriceRefreshMode = 'live', asOf?: string) =>
     request<CostBasisLadderResponse>(
-      `/portfolio/holdings/${encodeURIComponent(symbol)}/cost-ladder${holdingsParams(live, asOf)}`,
+      `/portfolio/holdings/${encodeURIComponent(symbol)}/cost-ladder${holdingsParams(mode, asOf)}`,
     ),
   cashflow: (from?: string, to?: string) =>
     request<CashflowTimelineResponse>(`/cashflow/timeline${dateParams(from, to)}`),
@@ -111,8 +113,8 @@ export const api = {
     }),
   deleteCashAnchor: () =>
     request<CashAnchorResponse>('/cash-anchor', { method: 'DELETE' }),
-  attribution: (live = true) =>
-    request<AttributionResponse>(`/portfolio/attribution${liveParam(live)}`),
+  attribution: (mode: PriceRefreshMode = 'live') =>
+    request<AttributionResponse>(`/portfolio/attribution${priceModeParam(mode)}`),
   symbolChart: (symbol: string, from?: string, to?: string, timeframe?: string) =>
     request<SymbolChartResponse>(
       `/symbol/${encodeURIComponent(symbol)}/chart${chartQueryParams(from, to, timeframe)}`,
@@ -147,6 +149,7 @@ export interface PortfolioSummary {
   cash_balance: number | null;
   net_account_value: number | null;
   live_prices_enabled: boolean;
+  price_refresh_mode?: PriceRefreshMode;
   current_price_ttl_seconds: number;
   current_prices_cached_at: string | null;
 }

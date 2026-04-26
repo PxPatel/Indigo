@@ -8,9 +8,23 @@ import { formatCurrency } from '../utils/format';
 import type { ManualEntryRecord, FundTransferRecord, CashAnchorRequest } from '../api/client';
 
 type Tab = 'transactions' | 'transfers' | 'anchor';
+type TxnForm = {
+  date: string;
+  symbol: string;
+  side: 'BUY' | 'SELL';
+  quantity: string;
+  price: string;
+  note: string;
+};
+type FundTransferForm = {
+  date: string;
+  type: 'DEPOSIT' | 'WITHDRAWAL';
+  amount: string;
+  note: string;
+};
 
-const EMPTY_TXN = { date: '', symbol: '', side: 'BUY' as const, quantity: '', price: '', note: '' };
-const EMPTY_FT = { date: '', type: 'DEPOSIT' as const, amount: '', note: '' };
+const EMPTY_TXN: TxnForm = { date: '', symbol: '', side: 'BUY', quantity: '', price: '', note: '' };
+const EMPTY_FT: FundTransferForm = { date: '', type: 'DEPOSIT', amount: '', note: '' };
 const EMPTY_ANCHOR = { date: '', balance: '' };
 
 export function ManualEntryModal() {

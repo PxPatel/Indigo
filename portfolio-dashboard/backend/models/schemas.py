@@ -2,6 +2,8 @@ from pydantic import BaseModel
 from typing import Literal, Optional
 from datetime import datetime
 
+PriceRefreshMode = Literal["live", "slow", "off"]
+
 
 class Transaction(BaseModel):
     date: datetime
@@ -56,6 +58,7 @@ class PortfolioSummary(BaseModel):
     cash_balance: Optional[float]       # None when no anchor set
     net_account_value: Optional[float]  # market value + cash
     live_prices_enabled: bool = True
+    price_refresh_mode: PriceRefreshMode = "live"
     current_price_ttl_seconds: int = 60
     current_prices_cached_at: Optional[str] = None  # ISO-8601 UTC; oldest cur_* cache write in this summary
 

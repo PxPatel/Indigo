@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
-import { useLivePrices, LIVE_SPOT_POLL_MS } from '../hooks/useLivePrices';
+import { useLivePrices, priceRefreshInterval, priceRefreshStaleTime } from '../hooks/useLivePrices';
 import { CostBasisLadderChart } from './CostBasisLadderChart';
 import { LoadingShimmer } from './LoadingShimmer';
 import { LadderStat } from './LadderStat';
@@ -16,14 +16,14 @@ export function CostBasisLadderInline({
   asOf?: string;
   onOpenDetail: () => void;
 }) {
-  const [livePrices] = useLivePrices();
+  const [priceMode] = useLivePrices();
   const timeTravel = !!asOf;
   const { data, isLoading, isError } = useQuery({
-    queryKey: ['cost-ladder', symbol, livePrices, asOf ?? null],
-    queryFn: () => api.costBasisLadder(symbol, livePrices, asOf),
+    queryKey: ['cost-ladder', symbol, priceMode, asOf ?? null],
+    queryFn: () => api.costBasisLadder(symbol, priceMode, asOf),
     enabled: enabled && !!symbol,
-    staleTime: timeTravel ? Infinity : (livePrices ? LIVE_SPOT_POLL_MS : undefined),
-    refetchInterval: timeTravel ? false : (livePrices ? LIVE_SPOT_POLL_MS : false),
+    staleTime: timeTravel ? Infinity : priceRefreshStaleTime(priceMode),
+    refetchInterval: timeTravel ? false : priceRefreshInterval(priceMode),
     refetchIntervalInBackground: true,
   });
 

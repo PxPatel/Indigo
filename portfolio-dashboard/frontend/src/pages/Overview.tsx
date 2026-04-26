@@ -24,7 +24,7 @@ import { LiveRefreshQuotesToggle } from '../components/LiveRefreshQuotesToggle';
 import { createPnlPeriodLineShape } from '../components/PnlPeriodLineShape';
 import { formatCurrency, formatPercent, pnlColor, formatAxisDollars } from '../utils/format';
 import { format, parseISO } from 'date-fns';
-import { useLivePrices, LIVE_SPOT_POLL_MS } from '../hooks/useLivePrices';
+import { useLivePrices, priceRefreshInterval, priceRefreshStaleTime } from '../hooks/useLivePrices';
 import { usePortfolioStore } from '../stores/portfolioStore';
 import { getTimeRangeBounds } from '../utils/timeRange';
 
@@ -53,12 +53,15 @@ export default function Overview() {
     () => getTimeRangeBounds(timeRangePreset, customDays),
     [timeRangePreset, customDays],
   );
-  const [livePrices, setLivePrices] = useLivePrices();
+  const [priceMode, setPriceMode] = useLivePrices();
+  const priceStaleTime = priceRefreshStaleTime(priceMode);
+  const priceRefetchInterval = priceRefreshInterval(priceMode);
 
   const { data: summary, isLoading: loadingSummary } = useQuery({
-    queryKey: ['summary', livePrices],
-    queryFn: () => api.summary(livePrices),
-    staleTime: livePrices ? LIVE_SPOT_POLL_MS : undefined,
+    queryKey: ['summary', priceMode],
+    queryFn: () => api.summary(priceMode),
+    staleTime: priceStaleTime,
+    refetchInterval: priceRefetchInterval,
   });
 
   const { data: history, isLoading: loadingHistory } = useQuery({
@@ -72,9 +75,10 @@ export default function Overview() {
   });
 
   const { data: holdings } = useQuery({
-    queryKey: ['holdings', livePrices],
-    queryFn: () => api.holdings(livePrices),
-    staleTime: livePrices ? LIVE_SPOT_POLL_MS : undefined,
+    queryKey: ['holdings', priceMode],
+    queryFn: () => api.holdings(priceMode),
+    staleTime: priceStaleTime,
+    refetchInterval: priceRefetchInterval,
   });
 
   const { data: txns } = useQuery({
@@ -218,7 +222,7 @@ export default function Overview() {
           }}
         >
           <TimeRangeControl />
-          <LiveRefreshQuotesToggle checked={livePrices} onChange={setLivePrices} />
+          <LiveRefreshQuotesToggle mode={priceMode} onChange={setPriceMode} />
         </div>
         <div style={{ display: 'flex', gap: 12 }}>
           {[...Array(6)].map((_, i) => <LoadingShimmer key={i} height={80} />)}
@@ -253,7 +257,7 @@ export default function Overview() {
             marginLeft: 'auto',
           }}
         >
-          <LiveRefreshQuotesToggle checked={livePrices} onChange={setLivePrices} />
+          <LiveRefreshQuotesToggle mode={priceMode} onChange={setPriceMode} />
           {s.current_prices_cached_at != null && (
             <span
               style={{
@@ -265,8 +269,10 @@ export default function Overview() {
                 textAlign: 'right',
               }}
             >
-              Oldest spot quote: {format(new Date(s.current_prices_cached_at), 'PPpp')} · max age{' '}
-              {s.current_price_ttl_seconds}s
+              Oldest spot quote: {format(new Date(s.current_prices_cached_at), 'PPpp')} ·{' '}
+              {priceMode === 'off'
+                ? 'updates paused'
+                : `max age ${s.current_price_ttl_seconds}s`}
             </span>
           )}
         </div>

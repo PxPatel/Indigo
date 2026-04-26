@@ -1,12 +1,20 @@
+import type { PriceRefreshMode } from '../api/client';
+
 interface LiveRefreshQuotesToggleProps {
-  checked: boolean;
-  onChange: (next: boolean) => void;
+  mode: PriceRefreshMode;
+  onChange: (next: PriceRefreshMode) => void;
 }
 
 /**
- * iOS-style switch for live spot polling — matches dark dashboard chrome (no native checkbox).
+ * Segmented quote-refresh control — matches dark dashboard chrome (no native select).
  */
-export function LiveRefreshQuotesToggle({ checked, onChange }: LiveRefreshQuotesToggleProps) {
+export function LiveRefreshQuotesToggle({ mode, onChange }: LiveRefreshQuotesToggleProps) {
+  const options: { value: PriceRefreshMode; label: string; aria: string }[] = [
+    { value: 'live', label: 'Live', aria: 'Live quote refresh' },
+    { value: 'slow', label: 'Slow', aria: 'Slow quote refresh' },
+    { value: 'off', label: 'No Update', aria: 'No quote updates' },
+  ];
+
   return (
     <div
       style={{
@@ -25,49 +33,52 @@ export function LiveRefreshQuotesToggle({ checked, onChange }: LiveRefreshQuotes
           userSelect: 'none',
         }}
       >
-        Live refresh quotes
+        Quote updates
       </span>
-      <button
-        type="button"
-        role="switch"
-        aria-checked={checked}
-        aria-label={checked ? 'Live refresh quotes on' : 'Live refresh quotes off'}
-        onClick={() => onChange(!checked)}
+      <div
+        role="radiogroup"
+        aria-label="Quote update mode"
         style={{
-          position: 'relative',
-          width: 46,
-          height: 26,
-          borderRadius: 13,
-          border: `1px solid ${checked ? 'rgba(0, 220, 130, 0.45)' : 'var(--border-active)'}`,
-          background: checked
-            ? 'linear-gradient(180deg, rgba(0, 220, 130, 0.22) 0%, rgba(0, 220, 130, 0.1) 100%)'
-            : 'var(--bg-tertiary)',
-          cursor: 'pointer',
-          padding: 0,
+          display: 'inline-flex',
+          padding: 3,
+          borderRadius: 999,
+          border: '1px solid var(--border-active)',
+          background: 'var(--bg-tertiary)',
+          boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.25)',
           flexShrink: 0,
-          transition: 'border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease',
-          boxShadow: checked
-            ? 'inset 0 1px 0 rgba(255,255,255,0.06)'
-            : 'inset 0 1px 2px rgba(0,0,0,0.25)',
         }}
       >
-        <span
-          aria-hidden
-          style={{
-            position: 'absolute',
-            top: 3,
-            left: checked ? 23 : 3,
-            width: 18,
-            height: 18,
-            borderRadius: '50%',
-            background: checked
-              ? 'linear-gradient(180deg, #1eff9a 0%, var(--accent-green) 100%)'
-              : 'linear-gradient(180deg, var(--text-muted) 0%, #3a3a48 100%)',
-            boxShadow: '0 1px 4px rgba(0,0,0,0.45)',
-            transition: 'left 0.2s cubic-bezier(0.4, 0, 0.2, 1), background 0.2s ease',
-          }}
-        />
-      </button>
+        {options.map((option) => {
+          const selected = mode === option.value;
+          return (
+            <button
+              key={option.value}
+              type="button"
+              role="radio"
+              aria-checked={selected}
+              aria-label={option.aria}
+              onClick={() => onChange(option.value)}
+              style={{
+                border: 0,
+                borderRadius: 999,
+                padding: '4px 10px',
+                background: selected
+                  ? 'linear-gradient(180deg, rgba(0, 220, 130, 0.24) 0%, rgba(0, 220, 130, 0.1) 100%)'
+                  : 'transparent',
+                color: selected ? 'var(--accent-green)' : 'var(--text-muted)',
+                cursor: 'pointer',
+                fontSize: 11,
+                fontWeight: 600,
+                fontFamily: 'var(--font-body)',
+                letterSpacing: '0.02em',
+                transition: 'background 0.2s ease, color 0.2s ease',
+              }}
+            >
+              {option.label}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }

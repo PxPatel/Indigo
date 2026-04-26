@@ -1,6 +1,7 @@
 import { motion } from 'framer-motion';
 import { Info } from 'lucide-react';
-import { ReactNode, useId, useState } from 'react';
+import { useId, useState } from 'react';
+import type { ReactNode } from 'react';
 
 interface CardProps {
   title?: string;

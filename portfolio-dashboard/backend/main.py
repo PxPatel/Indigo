@@ -6,7 +6,7 @@ import io
 
 from services.csv_parser import parse_csv
 from services.portfolio_engine import PortfolioEngine
-from services.market_data import MarketDataService, live_prices_scope
+from services.market_data import MarketDataService, price_refresh_scope
 from services.risk_engine import RiskEngine
 from services.benchmark import BenchmarkService
 from services.attribution import AttributionService
@@ -64,6 +64,17 @@ _manual_id_counter: int = 0
 _fund_transfers: list[FundTransferRecord] = []
 _fund_transfer_id_counter: int = 0
 _cash_anchor: Optional[CashAnchorRequest] = None
+_PRICE_REFRESH_MODES = {"live", "slow", "off"}
+
+
+def _coerce_price_refresh_mode(price_mode: Optional[str], live: Optional[bool]) -> str:
+    if price_mode is not None:
+        if price_mode not in _PRICE_REFRESH_MODES:
+            raise HTTPException(status_code=400, detail="price_mode must be live, slow, or off")
+        return price_mode
+    if live is None:
+        return "live"
+    return "live" if live else "slow"
 
 
 def _require_engine() -> PortfolioEngine:
@@ -324,9 +335,12 @@ async def delete_cash_anchor():
 # --- Portfolio endpoints ---
 
 @app.get("/api/v1/portfolio/summary", response_model=PortfolioSummary)
-async def portfolio_summary(live: bool = Query(True)):
+async def portfolio_summary(
+    price_mode: Optional[str] = Query(None),
+    live: Optional[bool] = Query(None),
+):
     engine = _require_engine()
-    with live_prices_scope(live):
+    with price_refresh_scope(_coerce_price_refresh_mode(price_mode, live)):
         return engine.get_summary()
 
 
@@ -350,7 +364,8 @@ async def portfolio_weights(
 
 @app.get("/api/v1/portfolio/holdings", response_model=HoldingsResponse)
 async def portfolio_holdings(
-    live: bool = Query(True),
+    price_mode: Optional[str] = Query(None),
+    live: Optional[bool] = Query(None),
     as_of: Optional[date] = Query(None),
 ):
     engine = _require_engine()
@@ -360,7 +375,7 @@ async def portfolio_holdings(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
     else:
-        with live_prices_scope(live):
+        with price_refresh_scope(_coerce_price_refresh_mode(price_mode, live)):
             resp = engine.get_holdings()
     resp.earliest_date = engine.start_date.isoformat()
     return resp
@@ -372,14 +387,15 @@ async def portfolio_holdings(
 )
 async def portfolio_cost_basis_ladder(
     symbol: str,
-    live: bool = Query(True),
+    price_mode: Optional[str] = Query(None),
+    live: Optional[bool] = Query(None),
     as_of: Optional[date] = Query(None),
 ):
     engine = _require_engine()
     try:
         if as_of is not None:
             return engine.get_cost_basis_ladder(symbol, as_of=as_of)
-        with live_prices_scope(live):
+        with price_refresh_scope(_coerce_price_refresh_mode(price_mode, live)):
             return engine.get_cost_basis_ladder(symbol)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
@@ -461,9 +477,12 @@ async def symbol_chart(
 
 
 @app.get("/api/v1/portfolio/attribution", response_model=AttributionResponse)
-async def portfolio_attribution(live: bool = Query(True)):
+async def portfolio_attribution(
+    price_mode: Optional[str] = Query(None),
+    live: Optional[bool] = Query(None),
+):
     engine = _require_engine()
-    with live_prices_scope(live):
+    with price_refresh_scope(_coerce_price_refresh_mode(price_mode, live)):
         svc = AttributionService(engine, get_price_provider(market))
         return svc.compute()
 

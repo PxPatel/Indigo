@@ -28,6 +28,7 @@ from services.market_data import (
     MarketDataService,
     current_price_ttl_for_request,
     live_prices_enabled,
+    price_refresh_mode,
 )
 from utils.calculations import sharpe_ratio, max_drawdown, beta_against, filter_date_range, wealth_series
 
@@ -200,6 +201,7 @@ def build_summary(
         cash_balance=cash_balance,
         net_account_value=net_account_value,
         live_prices_enabled=live_prices_enabled(),
+        price_refresh_mode=price_refresh_mode(),
         current_price_ttl_seconds=current_price_ttl_for_request(),
         current_prices_cached_at=cached_at_iso,
     )

@@ -1,39 +1,42 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
-import { useLivePrices, LIVE_SPOT_POLL_MS } from '../hooks/useLivePrices';
+import { useLivePrices, priceRefreshInterval, priceRefreshStaleTime } from '../hooks/useLivePrices';
 
 /**
- * Subscribes to summary, holdings, and attribution while live spots are on so refetch
- * intervals keep running even when navigating away from Overview or when the tab is in
- * the background (requires refetchIntervalInBackground).
+ * Subscribes to price-backed data while quote updates are enabled so refetch intervals
+ * keep running even when navigating away from Overview or when the tab is in the
+ * background (requires refetchIntervalInBackground).
  */
 export function LiveSpotBackgroundSync() {
-  const [livePrices] = useLivePrices();
+  const [priceMode] = useLivePrices();
+  const refreshInterval = priceRefreshInterval(priceMode);
+  const staleTime = priceRefreshStaleTime(priceMode);
+  const enabled = refreshInterval !== false;
 
   useQuery({
-    queryKey: ['summary', livePrices],
-    queryFn: () => api.summary(livePrices),
-    enabled: livePrices,
-    staleTime: LIVE_SPOT_POLL_MS,
-    refetchInterval: LIVE_SPOT_POLL_MS,
+    queryKey: ['summary', priceMode],
+    queryFn: () => api.summary(priceMode),
+    enabled,
+    staleTime,
+    refetchInterval: refreshInterval,
     refetchIntervalInBackground: true,
   });
 
   useQuery({
-    queryKey: ['holdings', livePrices],
-    queryFn: () => api.holdings(livePrices),
-    enabled: livePrices,
-    staleTime: LIVE_SPOT_POLL_MS,
-    refetchInterval: LIVE_SPOT_POLL_MS,
+    queryKey: ['holdings', priceMode],
+    queryFn: () => api.holdings(priceMode),
+    enabled,
+    staleTime,
+    refetchInterval: refreshInterval,
     refetchIntervalInBackground: true,
   });
 
   useQuery({
-    queryKey: ['attribution', livePrices],
-    queryFn: () => api.attribution(livePrices),
-    enabled: livePrices,
-    staleTime: LIVE_SPOT_POLL_MS,
-    refetchInterval: LIVE_SPOT_POLL_MS,
+    queryKey: ['attribution', priceMode],
+    queryFn: () => api.attribution(priceMode),
+    enabled,
+    staleTime,
+    refetchInterval: refreshInterval,
     refetchIntervalInBackground: true,
   });
 

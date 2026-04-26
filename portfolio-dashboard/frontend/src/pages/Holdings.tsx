@@ -10,7 +10,7 @@ import { formatCurrency, formatPercent, pnlColor } from '../utils/format';
 import type { HoldingDetail } from '../api/client';
 import { CostBasisLadderInline } from '../components/CostBasisLadderInline';
 import { CostBasisLadderModal } from '../components/CostBasisLadderModal';
-import { useLivePrices, LIVE_SPOT_POLL_MS } from '../hooks/useLivePrices';
+import { useLivePrices, priceRefreshInterval, priceRefreshStaleTime } from '../hooks/useLivePrices';
 
 type SortKey = keyof Pick<HoldingDetail, 'symbol' | 'shares' | 'avg_cost' | 'current_price' | 'market_value' | 'pnl_dollars' | 'pnl_percent' | 'weight' | 'today_change_percent'>;
 
@@ -24,16 +24,17 @@ const addDaysIso = (iso: string, delta: number): string => {
 };
 
 export default function Holdings() {
-  const [livePrices] = useLivePrices();
+  const [priceMode] = useLivePrices();
   // Ephemeral time-travel state: plain useState so it resets on tab switch / reload.
   // Deliberately not in Zustand or localStorage.
   const [asOf, setAsOf] = useState<string | null>(null);
   const timeTravel = asOf !== null;
 
   const { data, isLoading } = useQuery({
-    queryKey: ['holdings', livePrices, asOf],
-    queryFn: () => api.holdings(livePrices, asOf ?? undefined),
-    staleTime: timeTravel ? Infinity : (livePrices ? LIVE_SPOT_POLL_MS : undefined),
+    queryKey: ['holdings', priceMode, asOf],
+    queryFn: () => api.holdings(priceMode, asOf ?? undefined),
+    staleTime: timeTravel ? Infinity : priceRefreshStaleTime(priceMode),
+    refetchInterval: timeTravel ? false : priceRefreshInterval(priceMode),
   });
 
   const [search, setSearch] = useState('');
