@@ -20,6 +20,17 @@ _WEALTH_EPS = 1e-6
 _POS_EPS = 1e-9
 
 
+def _price_series(df: pd.DataFrame, symbol: str, date_range: pd.DatetimeIndex) -> pd.Series:
+    """Return one aligned price series even if upstream data has duplicate columns."""
+    aligned = df.reindex(date_range, method="ffill")
+    if aligned.empty or symbol not in aligned.columns:
+        return pd.Series(dtype=float)
+    col = aligned.loc[:, symbol]
+    if isinstance(col, pd.DataFrame):
+        col = col.iloc[:, 0]
+    return col.astype(float).ffill()
+
+
 def _cash_series_from_timeline(
     cash_timeline: list[dict],
     date_range: pd.DatetimeIndex,
@@ -95,10 +106,10 @@ class TimeSeriesBuilder:
         for symbol in self._equity_symbols:
             if symbol not in self._prices or symbol not in shares_ts:
                 continue
-            price_col = self._prices[symbol].reindex(date_range, method="ffill")
-            if price_col.empty:
+            price_s = _price_series(self._prices[symbol], symbol, date_range)
+            if price_s.empty:
                 continue
-            value_columns[symbol] = shares_ts[symbol] * price_col[symbol].ffill()
+            value_columns[symbol] = shares_ts[symbol] * price_s
 
         if value_columns:
             daily_values = pd.DataFrame(value_columns, index=date_range).fillna(0)

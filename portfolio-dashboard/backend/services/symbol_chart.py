@@ -23,6 +23,7 @@ from models.schemas import (
     RoundTrip,
     SymbolChartResponse,
 )
+from services.debug_context import today as debug_today
 from utils.calculations import walk_transactions_avg_cost
 
 logger = logging.getLogger(__name__)
@@ -215,7 +216,7 @@ class SymbolChartService:
                 logger.warning(
                     "Intraday empty for %s; falling back to short daily window", symbol
                 )
-                chart_end_fb = end or date.today()
+                chart_end_fb = end or debug_today()
                 chart_start_fb = chart_end_fb - timedelta(days=7)
                 df_fb = self._market.get_historical_prices(
                     symbol, chart_start_fb, chart_end_fb
@@ -223,7 +224,7 @@ class SymbolChartService:
                 ohlcv = _daily_ohlcv_points_from_history_df(df_fb)
         else:
             chart_start = start or self._engine.start_date
-            chart_end = end or date.today()
+            chart_end = end or debug_today()
             df = self._market.get_historical_prices(symbol, chart_start, chart_end)
             ohlcv = _daily_ohlcv_points_from_history_df(df)
 

@@ -16,6 +16,7 @@ from models.schemas import (
     HoldingContribution,
     SectorContribution,
 )
+from services.debug_context import today as debug_today
 from services.price_provider import PriceProvider
 
 logger = logging.getLogger(__name__)
@@ -30,7 +31,7 @@ class AttributionService:
 
     def compute(self, target_date: date | None = None) -> AttributionResponse:
         if target_date is None:
-            target_date = date.today()
+            target_date = debug_today()
 
         # 1. Start-of-day weights = prior trading day's closing weights
         snap_date_str, weight_fractions = self._engine.get_snapshot_weights(target_date)

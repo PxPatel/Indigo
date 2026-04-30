@@ -10,6 +10,11 @@ from zoneinfo import ZoneInfo
 import yfinance as yf
 import pandas as pd
 
+from services.debug_context import (
+    apply_historical_price_overrides,
+    current_price_override,
+    stock_info_overrides,
+)
 from utils.calculations import RETRY_SLEEP_SECONDS
 
 logger = logging.getLogger(__name__)
@@ -24,6 +29,50 @@ def _coerce_splits_to_series(raw: pd.Series | pd.DataFrame | None) -> pd.Series:
             return pd.Series(dtype=float)
         return raw.iloc[:, 0].astype(float)
     return raw
+
+
+def _close_frame_for_symbol(
+    df: pd.DataFrame,
+    symbol: str,
+    column_name: str | None = None,
+) -> pd.DataFrame:
+    """Normalize yfinance close data to one scalar-valued column for a symbol."""
+    if df.empty:
+        return pd.DataFrame()
+
+    series: pd.Series | pd.DataFrame
+    if isinstance(df.columns, pd.MultiIndex):
+        candidates = [
+            col for col in df.columns
+            if symbol in {str(part) for part in col}
+            and ("Close" in {str(part) for part in col} or len(df.columns) == 1)
+        ]
+        if not candidates:
+            candidates = [
+                col for col in df.columns
+                if symbol in {str(part) for part in col}
+            ]
+        if not candidates:
+            return pd.DataFrame()
+        series = df.loc[:, candidates[0]]
+    elif "Close" in df.columns:
+        series = df.loc[:, "Close"]
+    elif symbol in df.columns:
+        series = df.loc[:, symbol]
+    elif len(df.columns) == 1:
+        series = df.iloc[:, 0]
+    else:
+        return pd.DataFrame()
+
+    if isinstance(series, pd.DataFrame):
+        series = series.iloc[:, 0]
+    series = pd.to_numeric(series, errors="coerce").dropna()
+    if series.empty:
+        return pd.DataFrame()
+
+    out = pd.DataFrame({column_name or symbol: series})
+    out.index = pd.to_datetime(out.index).tz_localize(None)
+    return out.sort_index()
 
 
 # Cache TTLs
@@ -105,7 +154,7 @@ class MarketDataService:
     ) -> pd.DataFrame:
         cache_key = f"hist_{symbol}_{start}_{end}"
         if cache_key in self._price_cache and self._is_fresh(cache_key, _TTL_HISTORICAL):
-            return self._price_cache[cache_key]
+            return apply_historical_price_overrides(symbol, start, end, self._price_cache[cache_key])
 
         for attempt in range(3):
             try:
@@ -122,7 +171,7 @@ class MarketDataService:
                 df.index = pd.to_datetime(df.index).tz_localize(None)
                 self._price_cache[cache_key] = df
                 self._cache_ts[cache_key] = time.time()
-                return df
+                return apply_historical_price_overrides(symbol, start, end, df)
             except Exception:
                 if attempt < 2:
                     time.sleep(RETRY_SLEEP_SECONDS)
@@ -178,6 +227,10 @@ class MarketDataService:
         return pd.DataFrame()
 
     def get_current_price(self, symbol: str) -> float:
+        override = current_price_override(symbol)
+        if override is not None:
+            return override
+
         cache_key = f"cur_{symbol}"
         ttl = current_price_ttl_for_request()
         if cache_key in self._price_cache and self._is_fresh(cache_key, ttl):
@@ -211,6 +264,10 @@ class MarketDataService:
         return min(times) if times else None
 
     def get_stock_info(self, symbol: str) -> dict:
+        override = stock_info_overrides().get(symbol.strip().upper())
+        if override is not None:
+            return override
+
         if symbol in self._info_cache and self._is_fresh(f"info_{symbol}", _TTL_STOCK_INFO):
             return self._info_cache[symbol]
 
@@ -276,9 +333,10 @@ class MarketDataService:
         for symbol in symbols:
             cache_key = f"hist_{symbol}_{start}_{end}"
             if cache_key in self._price_cache and self._is_fresh(cache_key, _TTL_HISTORICAL):
-                df = self._price_cache[cache_key]
-                if not df.empty and "Close" in df.columns:
-                    results[symbol] = df[["Close"]].rename(columns={"Close": symbol})
+                df = apply_historical_price_overrides(symbol, start, end, self._price_cache[cache_key])
+                normalized = _close_frame_for_symbol(df, symbol)
+                if not normalized.empty:
+                    results[symbol] = normalized
             else:
                 uncached.append(symbol)
 
@@ -314,7 +372,10 @@ class MarketDataService:
                         cache_key = f"hist_{sym}_{start}_{end}"
                         self._price_cache[cache_key] = df
                         self._cache_ts[cache_key] = time.time()
-                        results[sym] = df.rename(columns={"Close": sym})
+                        out = apply_historical_price_overrides(sym, start, end, df)
+                        normalized = _close_frame_for_symbol(out, sym)
+                        if not normalized.empty:
+                            results[sym] = normalized
                 else:
                     # Multi-ticker: columns are MultiIndex (metric, symbol)
                     if "Close" in raw.columns.get_level_values(0):
@@ -322,14 +383,20 @@ class MarketDataService:
                         close_df.index = pd.to_datetime(close_df.index).tz_localize(None)
                         for sym in uncached:
                             if sym in close_df.columns:
-                                col = close_df[[sym]].dropna()
-                                if not col.empty:
+                                sym_close = close_df.loc[:, sym]
+                                if isinstance(sym_close, pd.DataFrame):
+                                    sym_close = sym_close.iloc[:, 0]
+                                sym_close = sym_close.dropna()
+                                if not sym_close.empty:
                                     # Cache the full DataFrame for single-symbol lookups
-                                    full_df = col.rename(columns={sym: "Close"})
+                                    full_df = pd.DataFrame({"Close": sym_close})
                                     cache_key = f"hist_{sym}_{start}_{end}"
                                     self._price_cache[cache_key] = full_df
                                     self._cache_ts[cache_key] = time.time()
-                                    results[sym] = col
+                                    out = apply_historical_price_overrides(sym, start, end, full_df)
+                                    normalized = _close_frame_for_symbol(out, sym)
+                                    if not normalized.empty:
+                                        results[sym] = normalized
                 break
             except Exception as e:
                 logger.warning(f"Batch download attempt {attempt + 1} failed: {e}")
@@ -342,7 +409,9 @@ class MarketDataService:
                 logger.info(f"Falling back to individual fetch for {sym}")
                 df = self.get_historical_prices(sym, start, end)
                 if not df.empty:
-                    results[sym] = df[["Close"]].rename(columns={"Close": sym})
+                    normalized = _close_frame_for_symbol(df, sym)
+                    if not normalized.empty:
+                        results[sym] = normalized
 
         return results
 
@@ -351,11 +420,15 @@ class MarketDataService:
         Returns dict mapping symbol -> info dict.
         """
         results: dict[str, dict] = {}
+        overrides = stock_info_overrides()
 
         # Split into cached and uncached
         uncached = []
         for symbol in symbols:
-            if symbol in self._info_cache and self._is_fresh(f"info_{symbol}", _TTL_STOCK_INFO):
+            norm_symbol = symbol.strip().upper()
+            if norm_symbol in overrides:
+                results[symbol] = overrides[norm_symbol]
+            elif symbol in self._info_cache and self._is_fresh(f"info_{symbol}", _TTL_STOCK_INFO):
                 results[symbol] = self._info_cache[symbol]
             else:
                 uncached.append(symbol)

@@ -7,6 +7,7 @@ import pandas as pd
 from models.schemas import SimulatorHolding, SimulatorResponse
 from services.portfolio_engine import PortfolioEngine
 from services.market_data import MarketDataService
+from services.debug_context import today as debug_today
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,7 @@ class SimulatorService:
         holdings_resp = self.engine.get_holdings()
         total_mv = holdings_resp.total_market_value
 
-        end = date.today()
+        end = debug_today()
         start = end - timedelta(days=365)
 
         # Fetch benchmark returns once; log and continue if unavailable.

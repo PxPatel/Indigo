@@ -35,6 +35,7 @@ class HoldingDetail(BaseModel):
     pnl_dollars: float
     pnl_percent: float
     weight: float
+    today_change_dollars: float
     today_change_percent: float
     sector: str
     last_activity: str
@@ -193,9 +194,23 @@ class RiskMetricsResponse(BaseModel):
     hhi: float
 
 
+class DrawdownContributor(BaseModel):
+    symbol: str
+    impact_dollars: float
+    impact_percent: float
+    kind: Literal["holding", "cash_flow", "other"] = "holding"
+
+
 class DrawdownPoint(BaseModel):
     date: str
     drawdown: float
+    benchmark_drawdown: Optional[float] = None
+    peak_date: Optional[str] = None
+    peak_value: Optional[float] = None
+    current_value: Optional[float] = None
+    contributors: list[DrawdownContributor] = []
+    cash_or_flow_contribution: Optional[DrawdownContributor] = None
+    uses_cash_anchor: bool = False
 
 
 class DrawdownResponse(BaseModel):
@@ -295,6 +310,7 @@ class ManualEntryRequest(BaseModel):
     quantity: float
     price: float
     note: str = ""
+    instrument_type: Literal["stock", "option"] = "stock"
 
 
 class ManualEntryRecord(BaseModel):
@@ -306,6 +322,7 @@ class ManualEntryRecord(BaseModel):
     price: float
     total_amount: float
     note: str
+    instrument_type: Literal["stock", "option"] = "stock"
 
 
 class ManualEntriesResponse(BaseModel):
@@ -464,3 +481,62 @@ class WebullCsvApiDiffResponse(BaseModel):
     unmatched_api_indices: list[int]
     # e.g. start_date clamped/skipped for Webull ~2y rolling lookback from today
     fetch_warnings: list[str] = []
+
+
+# --- Brokerage pickup (CSV baseline + supported broker API imports) ---
+
+BrokerageIntegrationId = Literal["webull"]
+
+
+class BrokerageRequestPreview(BaseModel):
+    method: Literal["GET", "POST"]
+    url: str
+    query: dict[str, str]
+    body: dict[str, str | float | int | bool | None] | None = None
+    hidden: list[str] = []
+
+
+class BrokerageIntegration(BaseModel):
+    id: BrokerageIntegrationId
+    label: str
+    description: str
+    configured: bool
+    unavailable_reason: Optional[str] = None
+    warnings: list[str] = []
+    request_preview: BrokerageRequestPreview | None = None
+
+
+class BrokerageIntegrationsResponse(BaseModel):
+    integrations: list[BrokerageIntegration]
+
+
+class BrokeragePickupPreviewRequest(BaseModel):
+    account_id: Optional[str] = None
+
+
+class BrokeragePickupPreviewResponse(BaseModel):
+    integration: BrokerageIntegrationId
+    account_id: str
+    request_preview: BrokerageRequestPreview
+    csv_start_date: str
+    csv_last_date: str
+    requested_start_date: str
+    requested_end_date: str
+    windows: list[WebullFetchWindowMeta]
+    api_group_count: int
+    api_rows: list[WebullUniformFillRow]
+    unmatched_api_rows: list[WebullUniformFillRow]
+    matches: list[WebullDiffMatch]
+    fetch_warnings: list[str] = []
+    time_note: str
+
+
+class BrokeragePickupImportRequest(BaseModel):
+    trades: list[WebullUniformFillRow]
+
+
+class BrokeragePickupImportResponse(BaseModel):
+    integration: BrokerageIntegrationId
+    imported_ids: list[int]
+    skipped_count: int = 0
+    manual_entries: ManualEntriesResponse

@@ -33,6 +33,7 @@ from models.schemas import (
     CostBasisMergedLevel,
 )
 from services.market_data import MarketDataService
+from services.debug_context import today as debug_today
 from services.parsers._utils import _parse_option_expiry
 from services.portfolio.time_series import TimeSeriesBuilder
 from services.portfolio.response_builders import (
@@ -79,7 +80,7 @@ class PortfolioEngine:
         # csv_start anchors the price-fetch window so manual entries with early dates
         # can't shift start_date backward and corrupt risk metrics.
         self.start_date: date = csv_start or transactions[0].date.date()
-        self.end_date: date = date.today()
+        self.end_date: date = debug_today()
 
         # Accounting state (set by build, exposed for backward compat)
         # risk_engine and symbol_chart read _shares_held / _avg_cost / _prices directly.
@@ -192,7 +193,7 @@ class PortfolioEngine:
                 continue
             net[t.symbol] += t.quantity if t.side == "BUY" else -t.quantity
 
-        today = date.today()
+        today = debug_today()
         injected: list[Transaction] = []
         for symbol, qty in net.items():
             if abs(qty) < MIN_SHARE_THRESHOLD:
@@ -279,7 +280,7 @@ class PortfolioEngine:
                 f"as_of ({as_of.isoformat()}) is before the earliest transaction date "
                 f"({self.start_date.isoformat()})"
             )
-        if as_of > date.today():
+        if as_of > debug_today():
             raise ValueError("as_of cannot be in the future")
 
         sliced = [t for t in self._accounting_transactions if t.date.date() <= as_of]
@@ -314,7 +315,7 @@ class PortfolioEngine:
                     f"as_of ({as_of.isoformat()}) is before the earliest transaction date "
                     f"({self.start_date.isoformat()})"
                 )
-            if as_of > date.today():
+            if as_of > debug_today():
                 raise ValueError("as_of cannot be in the future")
             txns_for_walk = [
                 t for t in self._accounting_transactions if t.date.date() <= as_of
@@ -359,14 +360,15 @@ class PortfolioEngine:
         else:
             price = self.market.get_current_price(sym)
             # Prior close from a fresh 7d window (same as holdings / summary), not engine _prices.
-            day_start = date.today() - timedelta(days=7)
-            recent = self.market.get_historical_prices_batch([sym], day_start, date.today())
+            today = debug_today()
+            day_start = today - timedelta(days=7)
+            recent = self.market.get_historical_prices_batch([sym], day_start, today)
             ohlc_df = recent.get(sym)
             if ohlc_df is None or ohlc_df.empty:
                 ohlc_df = self._prices.get(sym)
             if ohlc_df is not None and not ohlc_df.empty and sym in ohlc_df.columns:
                 p = ohlc_df[sym].dropna()
-                today_ts = pd.Timestamp(date.today())
+                today_ts = pd.Timestamp(today)
                 prior = p[p.index < today_ts]
                 if prior.empty:
                     prior = p

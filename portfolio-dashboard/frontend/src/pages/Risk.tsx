@@ -13,18 +13,118 @@ import {
   ReferenceLine,
 } from 'recharts';
 import { useMemo } from 'react';
-import { api } from '../api/client';
+import { api, type DrawdownContributor, type DrawdownPoint } from '../api/client';
 import { MetricCard } from '../components/MetricCard';
 import { Card } from '../components/Card';
 import { ChartTooltip } from '../components/ChartTooltip';
 import { LoadingShimmer } from '../components/LoadingShimmer';
 import { TimeRangeControl } from '../components/TimeRangeControl';
-import { formatMetric } from '../utils/format';
+import { formatCurrency, formatMetric, formatPercent } from '../utils/format';
 import { usePortfolioStore } from '../stores/portfolioStore';
 import { getTimeRangeBounds } from '../utils/timeRange';
 
+interface DrawdownTooltipPayload {
+  payload?: DrawdownPoint;
+}
+
+interface DrawdownTooltipProps {
+  active?: boolean;
+  payload?: DrawdownTooltipPayload[];
+  benchmark: string;
+}
+
+function contributorColor(row: DrawdownContributor): string {
+  if (row.impact_percent > 0) return 'var(--accent-green)';
+  if (row.impact_percent < 0) return 'var(--accent-red)';
+  return 'var(--text-secondary)';
+}
+
+function DrawdownAnatomyTooltip({ active, payload, benchmark }: DrawdownTooltipProps) {
+  const point = payload?.find((entry) => entry.payload)?.payload;
+  if (!active || !point) return null;
+
+  const residual = point.cash_or_flow_contribution;
+  const rows = point.contributors.filter((row) => Math.abs(row.impact_percent) >= 0.0001).slice(0, 7);
+  const atHighWater = Math.abs(point.drawdown) < 0.005;
+
+  return (
+    <div style={{
+      background: 'var(--bg-tertiary)',
+      border: '1px solid var(--border-active)',
+      borderRadius: 6,
+      padding: '10px 12px',
+      fontSize: 12,
+      minWidth: 280,
+      maxWidth: 360,
+      boxShadow: '0 12px 32px rgba(0,0,0,0.35)',
+    }}>
+      <div style={{ color: 'var(--text-secondary)', marginBottom: 8, fontFamily: 'var(--font-mono)' }}>
+        {point.date}
+      </div>
+      <div style={{ display: 'grid', gap: 4, fontFamily: 'var(--font-mono)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16 }}>
+          <span style={{ color: 'var(--text-secondary)' }}>Portfolio drawdown</span>
+          <span style={{ color: 'var(--accent-red)', fontWeight: 600 }}>{formatPercent(point.drawdown)}</span>
+        </div>
+        {point.benchmark_drawdown !== null && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16 }}>
+            <span style={{ color: 'var(--text-secondary)' }}>{benchmark} drawdown</span>
+            <span style={{ color: 'var(--accent-cyan)', fontWeight: 600 }}>
+              {formatPercent(point.benchmark_drawdown)}
+            </span>
+          </div>
+        )}
+      </div>
+
+      <div style={{
+        height: 1,
+        background: 'var(--border)',
+        margin: '10px 0',
+      }} />
+
+      {atHighWater ? (
+        <div style={{ color: 'var(--text-secondary)', lineHeight: 1.45 }}>
+          At high-water mark; no active drawdown anatomy.
+        </div>
+      ) : (
+        <>
+          <div style={{ color: 'var(--text-muted)', marginBottom: 8, lineHeight: 1.4 }}>
+            Since portfolio peak on <span style={{ color: 'var(--text-secondary)' }}>{point.peak_date}</span>
+          </div>
+          <div style={{ display: 'grid', gap: 5 }}>
+            {rows.map((row) => (
+              <div key={row.symbol} style={{ display: 'grid', gridTemplateColumns: '64px 1fr auto', gap: 8, alignItems: 'baseline' }}>
+                <span style={{ color: 'var(--text-primary)', fontWeight: 600, fontFamily: 'var(--font-mono)' }}>
+                  {row.symbol}
+                </span>
+                <span style={{ color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>
+                  {formatCurrency(row.impact_dollars)}
+                </span>
+                <span style={{ color: contributorColor(row), fontFamily: 'var(--font-mono)', fontWeight: 600 }}>
+                  {formatPercent(row.impact_percent)}
+                </span>
+              </div>
+            ))}
+            {residual !== null && Math.abs(residual.impact_percent) >= 0.0001 && (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8, alignItems: 'baseline', marginTop: 4 }}>
+                <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>
+                  {residual.symbol}
+                </span>
+                <span style={{ color: contributorColor(residual), fontFamily: 'var(--font-mono)', fontWeight: 600 }}>
+                  {formatPercent(residual.impact_percent)}
+                </span>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function Risk() {
   const setManualEntryModalOpen = usePortfolioStore((s) => s.setManualEntryModalOpen);
+  const selectedBenchmark = usePortfolioStore((s) => s.selectedBenchmark);
   const timeRangePreset = usePortfolioStore((s) => s.timeRangePreset);
   const customDays = usePortfolioStore((s) => s.customDays);
   const { from: rangeFrom, to: rangeTo } = useMemo(
@@ -38,8 +138,8 @@ export default function Risk() {
   });
 
   const { data: drawdown, isLoading: loadingDrawdown } = useQuery({
-    queryKey: ['drawdown', rangeFrom, rangeTo],
-    queryFn: () => api.drawdown(rangeFrom, rangeTo),
+    queryKey: ['drawdown', rangeFrom, rangeTo, selectedBenchmark],
+    queryFn: () => api.drawdown(rangeFrom, rangeTo, selectedBenchmark),
   });
 
   const { data: cashAnchor, isLoading: loadingCashAnchor } = useQuery({
@@ -74,6 +174,9 @@ export default function Risk() {
 
   const rollingBetaTitleInfo =
     'Each point is rolling beta versus SPY: covariance of your daily returns with SPY’s daily returns, divided by SPY’s variance, over a 60 trading-day window (needs at least 30 days). It estimates how your portfolio tended to move per 1% move in the S&P 500 during that stretch. Daily returns use net account value (equity plus implied cash) when you have a cash balance anchor; otherwise signed equity market value only.';
+
+  const drawdownTitleInfo =
+    `Portfolio drawdown uses the same wealth basis as the rest of Risk: net account value when a cash anchor is set, otherwise signed equity market value only. The ${selectedBenchmark} line uses its own high-water marks. Tooltip contributors explain your portfolio drawdown from its own peak date.`;
 
   // Correlation heatmap color
   const corrColor = (v: number) => {
@@ -119,7 +222,8 @@ export default function Risk() {
               <strong style={{ color: 'var(--text-primary)' }}>misleading</strong>
               : for example, being fully in cash shows as ~100% drawdown from an earlier equity peak. Set a
               known cash balance anchor (Manual entries → Cash Balance) so metrics align with net account
-              value including implied cash.
+              value including implied cash. Drawdown anatomy will show a trading-flow residual until cash is
+              modeled.
             </p>
             <button
               type="button"
@@ -193,7 +297,7 @@ export default function Risk() {
       </div>
 
       {/* Drawdown chart */}
-      <Card title="Drawdown from Peak" index={1}>
+      <Card title="Drawdown Anatomy" titleInfo={drawdownTitleInfo} index={1}>
         <ResponsiveContainer width="100%" height={250}>
           <AreaChart data={drawdown.series}>
             <defs>
@@ -218,7 +322,7 @@ export default function Risk() {
               tickFormatter={(v) => `${v}%`}
               width={50}
             />
-            <Tooltip content={<ChartTooltip valueFormat="percent" />} />
+            <Tooltip content={<DrawdownAnatomyTooltip benchmark={selectedBenchmark} />} />
             <ReferenceLine
               y={drawdown.max_drawdown}
               stroke="var(--accent-red)"
@@ -231,7 +335,16 @@ export default function Risk() {
               stroke="var(--accent-red)"
               strokeWidth={1.5}
               fill="url(#ddGrad)"
-              name="Drawdown"
+              name="Portfolio Drawdown"
+            />
+            <Line
+              type="monotone"
+              dataKey="benchmark_drawdown"
+              stroke="var(--accent-cyan)"
+              strokeWidth={1.4}
+              dot={false}
+              connectNulls
+              name={`${selectedBenchmark} Drawdown`}
             />
           </AreaChart>
         </ResponsiveContainer>

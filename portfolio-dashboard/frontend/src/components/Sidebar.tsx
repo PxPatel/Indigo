@@ -13,6 +13,7 @@ import {
   ChevronRight,
   PenLine,
   GitCompare,
+  PlugZap,
 } from 'lucide-react';
 import { usePortfolioStore } from '../stores/portfolioStore';
 
@@ -25,6 +26,7 @@ const NAV_ITEMS = [
   { to: '/simulator', icon: FlaskConical, label: 'Simulator' },
   { to: '/charts', icon: CandlestickChart, label: 'Charts' },
   { to: '/transactions', icon: List, label: 'Transactions' },
+  { to: '/brokerage-pickup', icon: PlugZap, label: 'Pickup' },
   { to: '/webull-diff', icon: GitCompare, label: 'CSV vs API' },
 ];
 

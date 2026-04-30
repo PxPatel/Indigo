@@ -9,6 +9,7 @@ from models.schemas import (
     RiskMetricsResponse,
     DrawdownResponse,
     DrawdownPoint,
+    DrawdownContributor,
     CorrelationResponse,
     SectorExposureResponse,
     SectorWeight,
@@ -115,7 +116,115 @@ class RiskEngine:
             hhi=round(hhi, 4),
         )
 
-    def get_drawdown_series(self, start: date | None = None, end: date | None = None) -> DrawdownResponse:
+    def _benchmark_drawdown_map(
+        self,
+        benchmark: str,
+        start: date | None,
+        end: date | None,
+    ) -> dict[pd.Timestamp, float]:
+        benchmark = benchmark.upper()
+        if benchmark not in {"SPY", "QQQ", "IWM", "DIA"}:
+            benchmark = "SPY"
+
+        s = start or self.engine.start_date
+        e = end or self.engine.end_date
+        try:
+            bench = self.market.get_benchmark_data(benchmark, s, e)
+        except Exception:
+            return {}
+        if bench.empty or "Close" not in bench.columns:
+            return {}
+
+        close = bench["Close"].copy()
+        close.index = pd.to_datetime(close.index).tz_localize(None)
+        close = filter_date_range(close, start, end).dropna()
+        if close.empty:
+            return {}
+
+        running_max = close.cummax()
+        safe = running_max > 1e-9
+        dd = pd.Series(0.0, index=close.index)
+        dd.loc[safe] = ((close - running_max) / running_max).loc[safe]
+        dd = dd.replace([np.inf, -np.inf], np.nan).fillna(0).clip(-1.0, 0.0)
+        return {dt: round(float(v) * 100, 2) for dt, v in dd.items()}
+
+    def _trade_flows_by_symbol(
+        self,
+        peak_dt: pd.Timestamp,
+        current_dt: pd.Timestamp,
+    ) -> tuple[dict[str, float], dict[str, float]]:
+        buys: dict[str, float] = {}
+        sells: dict[str, float] = {}
+        txns = getattr(self.engine, "_accounting_transactions", None) or getattr(
+            self.engine, "transactions", []
+        )
+
+        peak_day = peak_dt.date()
+        current_day = current_dt.date()
+        for t in txns:
+            t_day = t.date.date()
+            if t_day <= peak_day or t_day > current_day:
+                continue
+            amount = float(t.total_amount)
+            if t.side == "BUY":
+                buys[t.symbol] = buys.get(t.symbol, 0.0) + amount
+            elif t.side == "SELL":
+                sells[t.symbol] = sells.get(t.symbol, 0.0) + amount
+        return buys, sells
+
+    def _drawdown_anatomy(
+        self,
+        values: pd.DataFrame,
+        peak_dt: pd.Timestamp,
+        current_dt: pd.Timestamp,
+        peak_wealth: float,
+        current_wealth: float,
+    ) -> tuple[list[DrawdownContributor], DrawdownContributor | None]:
+        if peak_wealth <= 1e-9 or current_dt == peak_dt or current_wealth >= peak_wealth:
+            return [], None
+
+        excluded = {"total", "cash", "net_account", "equity_cost_basis"}
+        symbol_cols = [c for c in values.columns if c not in excluded]
+        buys, sells = self._trade_flows_by_symbol(peak_dt, current_dt)
+
+        contributors: list[DrawdownContributor] = []
+        total_symbol_impact = 0.0
+        for symbol in sorted(symbol_cols):
+            mv_peak = float(values.at[peak_dt, symbol]) if symbol in values.columns else 0.0
+            mv_current = float(values.at[current_dt, symbol]) if symbol in values.columns else 0.0
+            impact = mv_current - mv_peak - buys.get(symbol, 0.0) + sells.get(symbol, 0.0)
+            if abs(impact) < 0.005:
+                continue
+            total_symbol_impact += impact
+            contributors.append(
+                DrawdownContributor(
+                    symbol=symbol,
+                    impact_dollars=round(impact, 2),
+                    impact_percent=round((impact / peak_wealth) * 100, 4),
+                    kind="holding",
+                )
+            )
+
+        contributors.sort(key=lambda c: abs(c.impact_percent), reverse=True)
+
+        residual = (current_wealth - peak_wealth) - total_symbol_impact
+        if abs(residual) < 0.005:
+            return contributors, None
+
+        uses_cash_anchor = "net_account" in values.columns
+        return contributors, DrawdownContributor(
+            symbol="Cash / external flow" if uses_cash_anchor else "Trading flow / cash not modeled",
+            impact_dollars=round(residual, 2),
+            impact_percent=round((residual / peak_wealth) * 100, 4),
+            kind="cash_flow" if uses_cash_anchor else "other",
+        )
+
+    def get_drawdown_series(
+        self,
+        start: date | None = None,
+        end: date | None = None,
+        benchmark: str = "SPY",
+    ) -> DrawdownResponse:
         dv = filter_date_range(wealth_series(self.engine.daily_values), start, end)
 
         eps = 1e-9
@@ -128,10 +237,38 @@ class RiskEngine:
 
         md_val, md_start, md_end = max_drawdown(dv)
 
-        series = [
-            DrawdownPoint(date=dt.strftime("%Y-%m-%d"), drawdown=round(float(v) * 100, 2))
-            for dt, v in dd.items()
-        ]
+        values = filter_date_range(self.engine.daily_values, start, end)
+        benchmark_dd = self._benchmark_drawdown_map(benchmark, start, end)
+        uses_cash_anchor = "net_account" in self.engine.daily_values.columns
+
+        series = []
+        for dt, v in dd.items():
+            peak_dt = dv.loc[:dt].idxmax() if running_max.loc[dt] > eps else None
+            contributors: list[DrawdownContributor] = []
+            residual = None
+            peak_value = None
+            current_value = float(dv.loc[dt])
+            if peak_dt is not None:
+                peak_value = float(dv.loc[peak_dt])
+                contributors, residual = self._drawdown_anatomy(
+                    values,
+                    peak_dt,
+                    dt,
+                    peak_value,
+                    current_value,
+                )
+
+            series.append(DrawdownPoint(
+                date=dt.strftime("%Y-%m-%d"),
+                drawdown=round(float(v) * 100, 2),
+                benchmark_drawdown=benchmark_dd.get(dt),
+                peak_date=peak_dt.strftime("%Y-%m-%d") if peak_dt is not None else None,
+                peak_value=round(peak_value, 2) if peak_value is not None else None,
+                current_value=round(current_value, 2),
+                contributors=contributors,
+                cash_or_flow_contribution=residual,
+                uses_cash_anchor=uses_cash_anchor,
+            ))
 
         # Rolling volatility (30d)
         dr = filter_date_range(self.engine.daily_returns, start, end)

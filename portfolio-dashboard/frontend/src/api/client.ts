@@ -66,8 +66,13 @@ export const api = {
     request<CashflowTimelineResponse>(`/cashflow/timeline${dateParams(from, to)}`),
   riskMetrics: (from?: string, to?: string) =>
     request<RiskMetricsResponse>(`/risk/metrics${dateParams(from, to)}`),
-  drawdown: (from?: string, to?: string) =>
-    request<DrawdownResponse>(`/risk/drawdown${dateParams(from, to)}`),
+  drawdown: (from?: string, to?: string, benchmark: string = 'SPY') => {
+    const p = new URLSearchParams();
+    if (from) p.set('from', from);
+    if (to) p.set('to', to);
+    p.set('benchmark', benchmark);
+    return request<DrawdownResponse>(`/risk/drawdown?${p}`);
+  },
   correlation: (from?: string, to?: string) =>
     request<CorrelationResponse>(`/risk/correlation${dateParams(from, to)}`),
   sector: () => request<SectorExposureResponse>('/risk/sector'),
@@ -121,8 +126,32 @@ export const api = {
     ),
   simulator: (benchmark: string = 'SPY') =>
     request<SimulatorResponse>(`/simulator/holdings?benchmark=${encodeURIComponent(benchmark)}`),
+  debugStatus: () => request<DebugStatus>('/debug/status'),
+  exportDebugScenario: () => request<DebugScenario>('/debug/scenario'),
+  importDebugScenario: (scenario: DebugScenario) =>
+    request<DebugStatus>('/debug/scenario', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(scenario),
+    }),
+  clearDebugScenario: () =>
+    request<DebugStatus>('/debug/scenario', { method: 'DELETE' }),
   webullCsvApiDiff: (body: WebullDiffRequest) =>
     request<WebullCsvApiDiffResponse>('/webull/csv-api-diff', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  getBrokerageIntegrations: () =>
+    request<BrokerageIntegrationsResponse>('/brokerage-integrations'),
+  previewBrokeragePickup: (integration: BrokerageIntegrationId, body: BrokeragePickupPreviewRequest) =>
+    request<BrokeragePickupPreviewResponse>(`/brokerage-integrations/${encodeURIComponent(integration)}/preview`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  importBrokeragePickupTrades: (integration: BrokerageIntegrationId, body: BrokeragePickupImportRequest) =>
+    request<BrokeragePickupImportResponse>(`/brokerage-integrations/${encodeURIComponent(integration)}/import`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -136,6 +165,46 @@ export interface UploadResponse {
   date_range_start: string;
   date_range_end: string;
   total_invested: number;
+}
+
+export interface DebugTransactionOverlay {
+  date: string;
+  symbol: string;
+  side: 'BUY' | 'SELL';
+  quantity: number;
+  price: number;
+  instrument_type?: 'stock' | 'option';
+  note?: string;
+}
+
+export interface DebugHoldingOverride {
+  symbol: string;
+  shares: number;
+  avg_cost: number;
+  instrument_type?: 'stock' | 'option';
+  name?: string;
+  sector?: string;
+}
+
+export interface DebugPriceOverrides {
+  current: Record<string, number>;
+  historical: Record<string, Record<string, number>>;
+}
+
+export interface DebugScenario {
+  name: string;
+  notes?: string;
+  valuation_date?: string | null;
+  transaction_overlays: DebugTransactionOverlay[];
+  holding_overrides: DebugHoldingOverride[];
+  price_overrides: DebugPriceOverrides;
+}
+
+export interface DebugStatus {
+  enabled: boolean;
+  active: boolean;
+  scenario: DebugScenario | null;
+  effective_today: string;
 }
 
 export type WebullDiffStrategy = 'since_csv_last' | 'from_csv_first' | 'full_backfill';
@@ -185,6 +254,62 @@ export interface WebullCsvApiDiffResponse {
   unmatched_csv_indices: number[];
   unmatched_api_indices: number[];
   fetch_warnings?: string[];
+}
+
+export type BrokerageIntegrationId = 'webull';
+
+export interface BrokerageRequestPreview {
+  method: 'GET' | 'POST';
+  url: string;
+  query: Record<string, string>;
+  body?: Record<string, string | number | boolean | null> | null;
+  hidden: string[];
+}
+
+export interface BrokerageIntegration {
+  id: BrokerageIntegrationId;
+  label: string;
+  description: string;
+  configured: boolean;
+  unavailable_reason?: string | null;
+  warnings: string[];
+  request_preview?: BrokerageRequestPreview | null;
+}
+
+export interface BrokerageIntegrationsResponse {
+  integrations: BrokerageIntegration[];
+}
+
+export interface BrokeragePickupPreviewRequest {
+  account_id?: string | null;
+}
+
+export interface BrokeragePickupPreviewResponse {
+  integration: BrokerageIntegrationId;
+  account_id: string;
+  request_preview: BrokerageRequestPreview;
+  csv_start_date: string;
+  csv_last_date: string;
+  requested_start_date: string;
+  requested_end_date: string;
+  windows: WebullFetchWindowMeta[];
+  api_group_count: number;
+  api_rows: WebullUniformFillRow[];
+  unmatched_api_rows: WebullUniformFillRow[];
+  matches: WebullDiffMatch[];
+  fetch_warnings: string[];
+  time_note: string;
+}
+
+export interface BrokeragePickupImportRequest {
+  trades: WebullUniformFillRow[];
+}
+
+export interface BrokeragePickupImportResponse {
+  integration: BrokerageIntegrationId;
+  imported_ids: number[];
+  skipped_count: number;
+  manual_entries: ManualEntriesResponse;
 }
 
 export interface PortfolioSummary {
@@ -249,6 +374,7 @@ export interface HoldingDetail {
   pnl_dollars: number;
   pnl_percent: number;
   weight: number;
+  today_change_dollars: number;
   today_change_percent: number;
   sector: string;
   last_activity: string;
@@ -353,6 +479,19 @@ export interface RiskMetricsResponse {
 export interface DrawdownPoint {
   date: string;
   drawdown: number;
+  benchmark_drawdown: number | null;
+  peak_date: string | null;
+  peak_value: number | null;
+  current_value: number | null;
+  contributors: DrawdownContributor[];
+  cash_or_flow_contribution: DrawdownContributor | null;
+  uses_cash_anchor: boolean;
+}
+export interface DrawdownContributor {
+  symbol: string;
+  impact_dollars: number;
+  impact_percent: number;
+  kind: 'holding' | 'cash_flow' | 'other';
 }
 export interface DrawdownResponse {
   series: DrawdownPoint[];
@@ -430,6 +569,7 @@ export interface ManualEntryRequest {
   quantity: number;
   price: number;
   note: string;
+  instrument_type?: 'stock' | 'option';
 }
 export interface ManualEntryRecord {
   id: number;
@@ -440,6 +580,7 @@ export interface ManualEntryRecord {
   price: number;
   total_amount: number;
   note: string;
+  instrument_type?: 'stock' | 'option';
 }
 export interface ManualEntriesResponse {
   entries: ManualEntryRecord[];

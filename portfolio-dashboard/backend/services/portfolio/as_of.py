@@ -14,6 +14,26 @@ from datetime import date
 import pandas as pd
 
 
+def _series_for_symbol(df: pd.DataFrame, symbol: str) -> pd.Series:
+    """Return a single close series even when pandas/yfinance leaves tuple columns."""
+    if isinstance(df.columns, pd.MultiIndex):
+        candidates = [
+            col for col in df.columns
+            if symbol in {str(part) for part in col}
+        ]
+        if not candidates:
+            return pd.Series(dtype=float)
+        col = df.loc[:, candidates[0]]
+    else:
+        if symbol not in df.columns:
+            return pd.Series(dtype=float)
+        col = df.loc[:, symbol]
+
+    if isinstance(col, pd.DataFrame):
+        col = col.iloc[:, 0]
+    return pd.to_numeric(col, errors="coerce").dropna()
+
+
 def close_at_or_before(
     prices: dict[str, pd.DataFrame],
     symbol: str,
@@ -26,16 +46,17 @@ def close_at_or_before(
     returns (None, None).
     """
     df = prices.get(symbol)
-    if df is None or df.empty or symbol not in df.columns:
+    if df is None or df.empty:
         return None, None
-    series = df[symbol].dropna()
+    series = _series_for_symbol(df, symbol)
     if series.empty:
         return None, None
     cutoff = pd.Timestamp(as_of)
     available = series[series.index <= cutoff]
     if available.empty:
         return None, None
-    val = float(available.iloc[-1])
+    selected = available.iloc[-1]
+    val = float(selected)
     dt = available.index[-1].date()
     return val, dt
 
@@ -52,9 +73,9 @@ def prior_close(
     Returns None if there is no prior trading day in the window.
     """
     df = prices.get(symbol)
-    if df is None or df.empty or symbol not in df.columns:
+    if df is None or df.empty:
         return None
-    series = df[symbol].dropna()
+    series = _series_for_symbol(df, symbol)
     if series.empty:
         return None
     cutoff = pd.Timestamp(as_of)

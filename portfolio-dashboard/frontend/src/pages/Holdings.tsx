@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState, useMemo, Fragment } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Search, ChevronDown, ChevronUp, ArrowUpDown, Clock, X, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Search, ChevronDown, ChevronUp, ArrowUpDown, Clock, X, ChevronLeft, ChevronRight, History } from 'lucide-react';
 import { api } from '../api/client';
 import { Card } from '../components/Card';
 import { LoadingShimmer } from '../components/LoadingShimmer';
@@ -10,9 +10,12 @@ import { formatCurrency, formatPercent, pnlColor } from '../utils/format';
 import type { HoldingDetail } from '../api/client';
 import { CostBasisLadderInline } from '../components/CostBasisLadderInline';
 import { CostBasisLadderModal } from '../components/CostBasisLadderModal';
+import { HoldingsLastSeenModal } from '../components/HoldingsLastSeenModal';
 import { useLivePrices, priceRefreshInterval, priceRefreshStaleTime } from '../hooks/useLivePrices';
+import { useHoldingsLastSeen } from '../hooks/useHoldingsLastSeen';
+import { usePortfolioStore } from '../stores/portfolioStore';
 
-type SortKey = keyof Pick<HoldingDetail, 'symbol' | 'shares' | 'avg_cost' | 'current_price' | 'market_value' | 'pnl_dollars' | 'pnl_percent' | 'weight' | 'today_change_percent'>;
+type SortKey = keyof Pick<HoldingDetail, 'symbol' | 'shares' | 'avg_cost' | 'current_price' | 'market_value' | 'pnl_dollars' | 'pnl_percent' | 'weight' | 'today_change_dollars' | 'today_change_percent'>;
 
 const todayIso = () => new Date().toISOString().slice(0, 10);
 
@@ -25,6 +28,7 @@ const addDaysIso = (iso: string, delta: number): string => {
 
 export default function Holdings() {
   const [priceMode] = useLivePrices();
+  const portfolioSymbols = usePortfolioStore((s) => s.symbols);
   // Ephemeral time-travel state: plain useState so it resets on tab switch / reload.
   // Deliberately not in Zustand or localStorage.
   const [asOf, setAsOf] = useState<string | null>(null);
@@ -44,6 +48,7 @@ export default function Holdings() {
   const [ladderOpen, setLadderOpen] = useState<Record<string, boolean>>({});
   const [modalSymbol, setModalSymbol] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
+  const [lastSeenOpen, setLastSeenOpen] = useState(false);
 
   // Time-travel picker visibility + draft value (only applied on submit).
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -109,6 +114,18 @@ export default function Holdings() {
   const ladderEligible = (h: HoldingDetail) =>
     h.instrument_type !== 'option' && h.shares > 0;
 
+  const {
+    currentSnapshot,
+    previousSnapshot,
+    diff: lastSeenDiff,
+    markCurrentAsSeen,
+  } = useHoldingsLastSeen({
+    data,
+    priceMode,
+    enabled: !timeTravel,
+    portfolioSymbols,
+  });
+
   if (isLoading) return <LoadingShimmer height={500} />;
   if (!data) return null;
 
@@ -117,9 +134,13 @@ export default function Holdings() {
     ? "Close price on the selected as-of date (or the most recent trading day before it). Options show \"\u2014\" (no historical OCC-symbol pricing)."
     : 'Latest market price from yfinance. Options show "\u2014" (live pricing unavailable).';
   const dayLabel = timeTravel ? 'Day Change' : 'Today';
+  const dayPnlLabel = timeTravel ? 'Day P&L' : 'Today P&L';
   const dayTip = timeTravel
     ? "Close-to-close change ending on the as-of date. Flipped for short positions."
     : "Price change % from yesterday's close. Flipped for short positions.";
+  const dayPnlTip = timeTravel
+    ? "Nominal close-to-close P&L ending on the as-of date: shares × price change. Flipped for short positions."
+    : "Nominal day P&L from yesterday's close to the latest price: shares × price change. Flipped for short positions.";
   const mvTip = timeTravel
     ? "Shares \u00d7 close on the as-of date. For options, shown at cost basis (no historical OCC pricing)."
     : "Shares \u00d7 current price. For options, shown at cost basis since live pricing is unavailable.";
@@ -133,6 +154,7 @@ export default function Holdings() {
     { key: 'pnl_dollars', label: 'P&L ($)', align: 'right', tip: 'Unrealized gain or loss: market value minus total cost basis.' },
     { key: 'pnl_percent', label: 'P&L (%)', align: 'right', tip: 'Unrealized return as a percentage: (market value \u00f7 cost basis) \u2212 1.' },
     { key: 'weight', label: 'Weight', align: 'right', tip: "This position's market value as a % of total portfolio value." },
+    { key: 'today_change_dollars', label: dayPnlLabel, align: 'right', tip: dayPnlTip },
     { key: 'today_change_percent', label: dayLabel, align: 'right', tip: dayTip },
   ];
 
@@ -200,6 +222,36 @@ export default function Holdings() {
           >
             <Clock size={13} />
             <span>{timeTravel ? `As of ${asOf}` : 'Time travel'}</span>
+          </button>
+        </TooltipWrap>
+
+        <TooltipWrap
+          tip={timeTravel
+            ? 'Last-seen changes compare live holdings only. Exit time-travel mode to use it.'
+            : 'Compare current holdings against the last saved viewing session.'}
+        >
+          <button
+            type="button"
+            onClick={() => setLastSeenOpen(true)}
+            disabled={timeTravel}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '6px 10px',
+              background: 'var(--bg-tertiary)',
+              color: timeTravel ? 'var(--text-muted)' : 'var(--text-secondary)',
+              border: '1px solid var(--border)',
+              borderRadius: 6,
+              cursor: timeTravel ? 'not-allowed' : 'pointer',
+              fontSize: 12,
+              fontFamily: 'var(--font-body)',
+              fontWeight: 500,
+              opacity: timeTravel ? 0.55 : 1,
+            }}
+          >
+            <History size={13} />
+            <span>Changes since last seen</span>
           </button>
         </TooltipWrap>
       </div>
@@ -500,6 +552,9 @@ export default function Holdings() {
                     {formatPercent(h.pnl_percent)}
                   </td>
                   <td style={{ padding: '8px 10px', textAlign: 'right' }}>{h.weight.toFixed(1)}%</td>
+                  <td style={{ padding: '8px 10px', textAlign: 'right', color: pnlColor(h.today_change_dollars) }}>
+                    {formatCurrency(h.today_change_dollars)}
+                  </td>
                   <td style={{ padding: '8px 10px', textAlign: 'right', color: pnlColor(h.today_change_percent) }}>
                     {formatPercent(h.today_change_percent)}
                   </td>
@@ -507,7 +562,7 @@ export default function Holdings() {
                 <AnimatePresence>
                   {expandedRow === h.symbol && (
                     <tr key={`${h.symbol}-detail`}>
-                      <td colSpan={9} style={{ padding: 0 }}>
+                      <td colSpan={10} style={{ padding: 0 }}>
                         <motion.div
                           initial={{ height: 0, opacity: 0 }}
                           animate={{ height: 'auto', opacity: 1 }}
@@ -618,6 +673,9 @@ export default function Holdings() {
                 {formatPercent(data.total_pnl_percent)}
               </td>
               <td style={{ padding: '10px 10px', textAlign: 'right' }}>100.0%</td>
+              <td style={{ padding: '10px 10px', textAlign: 'right', color: pnlColor(data.holdings.reduce((sum, h) => sum + h.today_change_dollars, 0)) }}>
+                {formatCurrency(data.holdings.reduce((sum, h) => sum + h.today_change_dollars, 0))}
+              </td>
               <td />
             </tr>
           </tfoot>
@@ -630,6 +688,14 @@ export default function Holdings() {
       asOf={asOf ?? undefined}
       onClose={() => setModalOpen(false)}
       onExited={() => setModalSymbol(null)}
+    />
+    <HoldingsLastSeenModal
+      open={lastSeenOpen}
+      diff={lastSeenDiff}
+      currentSnapshot={currentSnapshot}
+      previousSnapshot={previousSnapshot}
+      onClose={() => setLastSeenOpen(false)}
+      onMarkSeen={markCurrentAsSeen}
     />
     </>
   );

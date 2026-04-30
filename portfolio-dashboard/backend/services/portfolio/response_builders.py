@@ -30,6 +30,7 @@ from services.market_data import (
     live_prices_enabled,
     price_refresh_mode,
 )
+from services.debug_context import today as debug_today
 from utils.calculations import sharpe_ratio, max_drawdown, beta_against, filter_date_range, wealth_series
 
 
@@ -122,9 +123,10 @@ def build_summary(
     # Day change: current price (fast_info, intraday-aware) vs prior session close.
     # This keeps today_change in sync with current_price used for total_value above.
     active_symbols = [s for s, sh in shares_held.items() if sh != 0]
-    day_start = date.today() - timedelta(days=7)
-    recent_prices = market.get_historical_prices_batch(active_symbols, day_start, date.today())
-    today_ts = pd.Timestamp(date.today())
+    today = debug_today()
+    day_start = today - timedelta(days=7)
+    recent_prices = market.get_historical_prices_batch(active_symbols, day_start, today)
+    today_ts = pd.Timestamp(today)
 
     today_value = 0.0
     yesterday_value = 0.0
@@ -319,7 +321,7 @@ def build_holdings(
     """Build the per-position holdings breakdown.
 
     P&L for short positions: P&L = cost_basis - market_value (profit when price falls).
-    today_change_percent is negated for shorts so a price rise shows as a loss.
+    Today change values are negated for shorts so a price rise shows as a loss.
 
     Prior close for today% uses a fresh 7d OHLC fetch (same window as build_summary),
     not engine snapshot prices — those only refresh on rebuild and go stale overnight.
@@ -335,9 +337,10 @@ def build_holdings(
         for s, sh in shares_held.items()
         if sh != 0 and symbol_instrument.get(s, "stock") != "option"
     ]
-    day_start = date.today() - timedelta(days=7)
+    today = debug_today()
+    day_start = today - timedelta(days=7)
     recent_ohlc = (
-        market.get_historical_prices_batch(equity_symbols, day_start, date.today())
+        market.get_historical_prices_batch(equity_symbols, day_start, today)
         if equity_symbols
         else {}
     )
@@ -360,6 +363,7 @@ def build_holdings(
             mv = cb
             pnl = 0.0
             pnl_pct = 0.0
+            today_dollars = 0.0
             today_pct = 0.0
             info: dict = {}
         else:
@@ -369,6 +373,7 @@ def build_holdings(
             # Short P&L: profit when price falls (cost_basis > market_value)
             pnl = (cb - mv) if is_short else (mv - cb)
             pnl_pct = (pnl / cb * 100) if cb > 0 else 0
+            today_dollars = 0.0
             today_pct = 0.0
             ohlc_df = recent_ohlc.get(symbol)
             if ohlc_df is None or ohlc_df.empty:
@@ -377,7 +382,7 @@ def build_holdings(
                 p = ohlc_df[symbol].dropna()
                 # Prior close = last OHLCV close strictly before today so that
                 # today_pct uses the same current price (fast_info) already in `price`.
-                today_ts = pd.Timestamp(date.today())
+                today_ts = pd.Timestamp(today)
                 prior = p[p.index < today_ts]
                 if prior.empty:
                     prior = p  # edge case: only have today's OHLCV row
@@ -385,7 +390,9 @@ def build_holdings(
                     prev_close = float(prior.iloc[-1])
                     if prev_close > 0:
                         raw_pct = (price / prev_close - 1) * 100
-                        # Invert for shorts: a price rise is a loss for the short holder
+                        raw_dollars = abs(shares) * (price - prev_close)
+                        # Invert for shorts: a price rise is a loss for the short holder.
+                        today_dollars = -raw_dollars if is_short else raw_dollars
                         today_pct = -raw_pct if is_short else raw_pct
             info = stock_info.get(symbol, {})
 
@@ -403,6 +410,7 @@ def build_holdings(
             pnl_dollars=round(pnl, 2),
             pnl_percent=round(pnl_pct, 2),
             weight=0,  # filled in second pass below
+            today_change_dollars=round(today_dollars, 2),
             today_change_percent=round(today_pct, 2),
             sector=info.get("sector", "Options") if not is_option else "Options",
             last_activity=last_activity.get(symbol, ""),
@@ -471,6 +479,7 @@ def build_holdings_as_of(
             mv = cb
             pnl = 0.0
             pnl_pct = 0.0
+            day_dollars = 0.0
             day_pct = 0.0
             info: dict = {}
         else:
@@ -480,9 +489,12 @@ def build_holdings_as_of(
             mv = abs(shares) * price
             pnl = (cb - mv) if is_short else (mv - cb)
             pnl_pct = (pnl / cb * 100) if cb > 0 else 0
+            day_dollars = 0.0
             day_pct = 0.0
             if prev is not None and prev > 0 and price > 0:
                 raw_pct = (price / prev - 1) * 100
+                raw_dollars = abs(shares) * (price - prev)
+                day_dollars = -raw_dollars if is_short else raw_dollars
                 day_pct = -raw_pct if is_short else raw_pct
             info = stock_info.get(symbol, {})
 
@@ -500,6 +512,7 @@ def build_holdings_as_of(
             pnl_dollars=round(pnl, 2),
             pnl_percent=round(pnl_pct, 2),
             weight=0,
+            today_change_dollars=round(day_dollars, 2),
             today_change_percent=round(day_pct, 2),
             sector=info.get("sector", "Options") if not is_option else "Options",
             last_activity=last_activity.get(symbol, ""),

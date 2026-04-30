@@ -10,6 +10,7 @@ import { LoadingShimmer } from './components/LoadingShimmer';
 import { Toaster } from './components/Toaster';
 import { TopLoader } from './components/TopLoader';
 import { LiveSpotBackgroundSync } from './components/LiveSpotBackgroundSync';
+import { DebugScenarioPanel } from './components/DebugScenarioPanel';
 import { api } from './api/client';
 
 const Overview = lazy(() => import('./pages/Overview'));
@@ -20,6 +21,7 @@ const Benchmark = lazy(() => import('./pages/Benchmark'));
 const Simulator = lazy(() => import('./pages/Simulator'));
 const Charts = lazy(() => import('./pages/Charts'));
 const Transactions = lazy(() => import('./pages/Transactions'));
+const BrokeragePickup = lazy(() => import('./pages/BrokeragePickup'));
 const WebullCsvApiDiff = lazy(() => import('./pages/WebullCsvApiDiff'));
 
 const queryClient = new QueryClient({
@@ -69,6 +71,7 @@ function DashboardLayout() {
   return (
     <div style={{ display: 'flex', minHeight: '100vh' }}>
       <LiveSpotBackgroundSync />
+      <DebugScenarioPanel />
       <Sidebar onReupload={handleReupload} />
       <ManualEntryModal />
       <main style={{
@@ -88,6 +91,7 @@ function DashboardLayout() {
             <Route path="/simulator" element={<Simulator />} />
             <Route path="/charts" element={<Charts />} />
             <Route path="/transactions" element={<Transactions />} />
+            <Route path="/brokerage-pickup" element={<BrokeragePickup />} />
             <Route path="/webull-diff" element={<WebullCsvApiDiff />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
@@ -112,7 +116,7 @@ export default function App() {
       .then(({ has_data }) => { if (!has_data) reset(); })
       .catch(() => reset())
       .finally(() => setBackendChecked(true));
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps — intentionally runs once on mount
+  }, [isUploaded, reset]);
 
   if (!backendChecked) {
     return (

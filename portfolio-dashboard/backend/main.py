@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 
 _backend_dir = Path(__file__).resolve().parent
 _portfolio_dir = _backend_dir.parent
@@ -7,6 +8,22 @@ try:
     from dotenv import load_dotenv
 except ImportError:
     load_dotenv = None
+
+
+def _load_env_file_fallback(path: Path, override: bool = False) -> None:
+    """Tiny .env reader for local dev when python-dotenv is not installed."""
+    if not path.exists():
+        return
+    for raw_line in path.read_text(encoding="utf-8-sig", errors="replace").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and (override or key not in os.environ):
+            os.environ[key] = value
+
 
 if load_dotenv is not None:
     load_dotenv(_backend_dir / ".env")
@@ -20,6 +37,18 @@ if load_dotenv is not None:
         Path.cwd() / "env.local",
     ):
         load_dotenv(path, override=True)
+else:
+    _load_env_file_fallback(_backend_dir / ".env")
+    _load_env_file_fallback(_portfolio_dir / ".env")
+    for path in (
+        _portfolio_dir / ".env.local",
+        _portfolio_dir / "env.local",
+        _backend_dir / ".env.local",
+        _backend_dir / "env.local",
+        Path.cwd() / ".env.local",
+        Path.cwd() / "env.local",
+    ):
+        _load_env_file_fallback(path, override=True)
 
 # WEBULL_* — always parse with utf-8-sig / CRLF-safe logic (works even if python-dotenv
 # is not installed in the interpreter that runs uvicorn).
@@ -44,6 +73,17 @@ from services.attribution import AttributionService
 from services.price_provider import get_price_provider
 from services.symbol_chart import SymbolChartService
 from services.simulator import SimulatorService
+from services.debug_context import (
+    DebugScenario,
+    DebugStatus,
+    active_scenario,
+    apply_scenario,
+    clear_scenario,
+    debug_scenarios_enabled,
+    debug_status,
+    scenario_transactions,
+    today as debug_today,
+)
 from models.schemas import (
     Transaction,
     UploadResponse,
@@ -70,10 +110,20 @@ from models.schemas import (
     SymbolChartResponse,
     SimulatorResponse,
     CostBasisLadderResponse,
+    BrokerageIntegrationsResponse,
+    BrokeragePickupPreviewRequest,
+    BrokeragePickupPreviewResponse,
+    BrokeragePickupImportRequest,
+    BrokeragePickupImportResponse,
     WebullCsvApiDiffResponse,
     WebullDiffRequest,
 )
 from services.webull.diff_job import run_csv_api_diff
+from services.brokerage_pickup import (
+    list_brokerage_integrations,
+    pickup_row_to_manual_entry_fields,
+    preview_brokerage_pickup,
+)
 
 app = FastAPI(title="Portfolio Command Center", version="1.0.0")
 
@@ -134,8 +184,14 @@ def _manual_entries_as_transactions() -> list[Transaction]:
             quantity=e.quantity,
             price=e.price,
             total_amount=e.total_amount,
+            instrument_type=e.instrument_type,
         ))
     return txns
+
+
+def _manual_entry_total_amount(quantity: float, price: float, instrument_type: str) -> float:
+    multiplier = 100 if instrument_type == "option" else 1
+    return round(quantity * price * multiplier, 2)
 
 
 def _dedup_and_sort(transactions: list[Transaction]) -> list[Transaction]:
@@ -156,7 +212,8 @@ def _rebuild_engine() -> None:
     global _engine, _risk, _benchmark_svc
 
     all_txns = list(_csv_transactions) + _manual_entries_as_transactions()
-    transactions = _dedup_and_sort(all_txns)
+    csv_start = min(t.date.date() for t in _csv_transactions) if _csv_transactions else None
+    transactions = _dedup_and_sort(scenario_transactions(all_txns, csv_start))
 
     if not transactions:
         _engine = None
@@ -180,7 +237,6 @@ def _rebuild_engine() -> None:
     # Manual entries can fall within the portfolio range but must never shift
     # start_date backward — doing so extends the price-fetch window and includes
     # dead-period (all-zero) days in returns, causing haywire risk metrics.
-    csv_start = min(t.date.date() for t in _csv_transactions) if _csv_transactions else None
 
     _engine = PortfolioEngine(transactions, market, fund_transfers=transfers, cash_anchor=anchor, csv_start=csv_start)
     _engine.build()
@@ -191,6 +247,34 @@ def _rebuild_engine() -> None:
 @app.get("/api/v1/status")
 async def status():
     return {"has_data": _engine is not None}
+
+
+if debug_scenarios_enabled():
+    @app.get("/api/v1/debug/status", response_model=DebugStatus)
+    async def debug_scenario_status():
+        return debug_status()
+
+
+    @app.get("/api/v1/debug/scenario", response_model=DebugScenario)
+    async def export_debug_scenario():
+        scenario = active_scenario()
+        if scenario is None:
+            raise HTTPException(status_code=404, detail="No active debug scenario.")
+        return scenario
+
+
+    @app.post("/api/v1/debug/scenario", response_model=DebugStatus)
+    async def import_debug_scenario(scenario: DebugScenario):
+        apply_scenario(scenario)
+        _rebuild_engine()
+        return debug_status()
+
+
+    @app.delete("/api/v1/debug/scenario", response_model=DebugStatus)
+    async def clear_debug_scenario():
+        clear_scenario()
+        _rebuild_engine()
+        return debug_status()
 
 
 @app.post("/api/v1/upload", response_model=UploadResponse)
@@ -234,6 +318,111 @@ async def webull_csv_api_diff(body: WebullDiffRequest):
         ) from e
 
 
+# --- Brokerage pickup ---
+
+@app.get("/api/v1/brokerage-integrations", response_model=BrokerageIntegrationsResponse)
+async def brokerage_integrations():
+    return list_brokerage_integrations(_csv_transactions)
+
+
+@app.post(
+    "/api/v1/brokerage-integrations/{integration}/preview",
+    response_model=BrokeragePickupPreviewResponse,
+)
+async def brokerage_pickup_preview(integration: str, body: BrokeragePickupPreviewRequest):
+    try:
+        return preview_brokerage_pickup(integration, _csv_transactions, body)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except requests.RequestException as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Brokerage HTTP error: {e}",
+        ) from e
+
+
+@app.post(
+    "/api/v1/brokerage-integrations/{integration}/import",
+    response_model=BrokeragePickupImportResponse,
+)
+async def brokerage_pickup_import(integration: str, body: BrokeragePickupImportRequest):
+    global _manual_entries, _manual_id_counter
+    if integration != "webull":
+        raise HTTPException(status_code=400, detail=f"Unsupported brokerage integration: {integration}")
+    if not body.trades:
+        raise HTTPException(status_code=400, detail="Select at least one trade to import.")
+
+    csv_min = min((t.date.date() for t in _csv_transactions), default=None)
+    imported_ids: list[int] = []
+    skipped_count = 0
+    existing_import_notes = {e.note for e in _manual_entries if e.note.startswith("Imported from Webull API")}
+
+    records_to_import: list[ManualEntryRecord] = []
+    next_id = _manual_id_counter
+
+    for row in body.trades:
+        try:
+            fields = pickup_row_to_manual_entry_fields(row)
+            entry_date = datetime.strptime(fields["date"], "%Y-%m-%d").date()
+        except (ValueError, TypeError) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+        if fields["quantity"] <= 0 or fields["price"] <= 0:
+            raise HTTPException(status_code=400, detail="Imported trades must have positive quantity and price.")
+        if csv_min is not None and entry_date < csv_min:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Imported trade {fields['date']} is before your earliest CSV transaction ({csv_min}).",
+            )
+        if entry_date > debug_today():
+            raise HTTPException(status_code=400, detail="Imported trade date cannot be in the future.")
+        if fields["note"] in existing_import_notes:
+            skipped_count += 1
+            continue
+
+        next_id += 1
+        record = ManualEntryRecord(
+            id=next_id,
+            date=fields["date"],
+            symbol=fields["symbol"],
+            side=fields["side"],
+            quantity=fields["quantity"],
+            price=fields["price"],
+            total_amount=fields["total_amount"],
+            note=fields["note"],
+            instrument_type=fields["instrument_type"],
+        )
+        records_to_import.append(record)
+        existing_import_notes.add(record.note)
+        imported_ids.append(record.id)
+
+    if records_to_import:
+        previous_entries = list(_manual_entries)
+        previous_counter = _manual_id_counter
+        _manual_entries.extend(records_to_import)
+        _manual_id_counter = next_id
+        try:
+            _rebuild_engine()
+        except Exception as e:
+            _manual_entries = previous_entries
+            _manual_id_counter = previous_counter
+            try:
+                _rebuild_engine()
+            except Exception:
+                pass
+            raise HTTPException(
+                status_code=500,
+                detail=f"Imported trades could not be applied to the portfolio: {e}",
+            ) from e
+
+    return BrokeragePickupImportResponse(
+        integration="webull",
+        imported_ids=imported_ids,
+        skipped_count=skipped_count,
+        manual_entries=ManualEntriesResponse(entries=_manual_entries, count=len(_manual_entries)),
+    )
+
+
 # --- Manual entries ---
 
 @app.get("/api/v1/manual-entries", response_model=ManualEntriesResponse)
@@ -264,7 +453,7 @@ async def add_manual_entry(entry: ManualEntryRequest):
                 status_code=400,
                 detail=f"Date {entry.date} is before your earliest transaction ({csv_min}). Manual entries must fall within your CSV date range.",
             )
-        if entry_date > date.today():
+        if entry_date > debug_today():
             raise HTTPException(status_code=400, detail="Date cannot be in the future.")
 
     _manual_id_counter += 1
@@ -275,8 +464,9 @@ async def add_manual_entry(entry: ManualEntryRequest):
         side=entry.side,
         quantity=entry.quantity,
         price=entry.price,
-        total_amount=round(entry.quantity * entry.price, 2),
+        total_amount=_manual_entry_total_amount(entry.quantity, entry.price, entry.instrument_type),
         note=entry.note,
+        instrument_type=entry.instrument_type,
     )
     _manual_entries.append(record)
     _rebuild_engine()
@@ -471,9 +661,10 @@ async def risk_metrics(
 async def risk_drawdown(
     start: Optional[date] = Query(None, alias="from"),
     end: Optional[date] = Query(None, alias="to"),
+    benchmark: str = Query("SPY"),
 ):
     risk = _require_risk()
-    return risk.get_drawdown_series(start, end)
+    return risk.get_drawdown_series(start, end, benchmark)
 
 
 @app.get("/api/v1/risk/correlation", response_model=CorrelationResponse)
